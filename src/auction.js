@@ -587,7 +587,12 @@ export class Auction extends DurableObject {
         return json({ wishes: this.all(`SELECT emp, amount, at FROM wishes WHERE item_id=? ORDER BY amount DESC, at ASC`, mm[1]) });
       }
       if (p === "/log" && m === "GET") return json({ log: this.all(`SELECT * FROM admin_log ORDER BY id DESC LIMIT 500`) });
-      if (p === "/samples" && m === "POST") { this.audit(sess, "샘플 물품 넣기", null); return this.seedSamples(); }
+      if (p === "/samples" && m === "POST") {
+        const b = await body();
+        this.audit(sess, "샘플 물품 넣기", null, `${int(b.count) || 8}개 · ${({ ready: "준비중", live: "진행중", done: "완료", mix: "골고루" })[b.status] || "골고루"}`);
+        return this.seedSamples(b.count, b.status);
+      }
+      if (p === "/roster" && m === "GET") return json({ rows: this.roster() });
       if (p === "/samples" && m === "DELETE") {
         const ids = this.all(`SELECT id FROM items WHERE is_sample=1`).map((r) => r.id);
         for (const id of ids) for (const t of ["bids", "images", "photos", "sms_log", "wishes"]) this.run(`DELETE FROM ${t} WHERE item_id=?`, id);
@@ -676,38 +681,81 @@ export class Auction extends DurableObject {
     }
   }
 
-  // 미리보기용 샘플 물품: 이미 끝난 3개(낙찰/유찰), 곧 끝나는 1개, 진행중 4개. 입찰자는 가상의 사번(9999xx)
-  async seedSamples() {
-    if (this.first(`SELECT 1 AS x FROM items WHERE is_sample=1 LIMIT 1`)) return err(409, "샘플 물품이 이미 있습니다. 먼저 ‘샘플만 삭제’를 눌러 주세요.");
+  // 미리보기용 샘플 물품. status: ready(입찰 없음) | live(입찰 진행중) | done(이미 낙찰) | mix(골고루)
+  async seedSamples(count = 8, status = "mix") {
+    count = Math.max(1, Math.min(30, int(count) || 8));
+    if (!["ready", "live", "done", "mix"].includes(status)) status = "mix";
+    const POOL = [
+      ["무선 블루투스 스피커", 20000, "거의 새 제품입니다.\n박스, 충전 케이블 포함."], ["핸드드립 커피 세트", 15000, "드리퍼, 서버, 필터 100매 구성."],
+      ["캐시미어 머플러", 30000, "미개봉 새 상품입니다."], ["보드게임 세트", 10000, "구성품 모두 있습니다. 3~6인용."],
+      ["노이즈캔슬링 이어폰", 50000, "6개월 사용, 정상 작동합니다."], ["아로마 디퓨저", 10000, "리필 오일 2병 포함."],
+      ["캠핑 랜턴", 20000, "USB 충전식, 3단 밝기."], ["와인 글라스 세트", 15000, "4개입, 선물 박스 포장."],
+      ["미니 공기청정기", 40000, "필터 교체 3개월 전."], ["베스트셀러 도서 5권", 10000, "깨끗하게 읽었습니다."],
+      ["전기 주전자", 15000, "1.7L, 정상 작동."], ["스마트 워치 밴드 세트", 10000, "3종 색상."],
+    ];
     const now = Date.now(), H = 3600e3, D = 24 * H;
     const base = this.first(`SELECT COALESCE(MAX(no),0) AS n FROM items`).n;
-    const S = [
-      ["[샘플] 무선 블루투스 스피커", 20000, 1000, now - 2 * H, [20000, 23000, 26000], "거의 새 제품입니다.\n박스, 충전 케이블 포함."],
-      ["[샘플] 핸드드립 커피 세트", 15000, 1000, now - 1 * H, [15000, 17000], "드리퍼, 서버, 필터 100매 구성."],
-      ["[샘플] 캐시미어 머플러", 30000, 2000, now - 30 * 60e3, [], "미개봉 새 상품입니다."],
-      ["[샘플] 보드게임 세트", 10000, 1000, now + 3 * 60e3, [10000, 12000], "구성품 모두 있습니다. 3~6인용."],
-      ["[샘플] 노이즈캔슬링 이어폰", 50000, 5000, now + 2 * D, [50000, 60000, 70000, 75000], "6개월 사용, 정상 작동합니다."],
-      ["[샘플] 아로마 디퓨저", 10000, 1000, now + 2 * D, [], "리필 오일 2병 포함."],
-      ["[샘플] 캠핑 랜턴", 20000, 2000, now + 3 * D, [20000], "USB 충전식, 3단 밝기."],
-      ["[샘플] 와인 글라스 세트", 15000, 1000, now + 3 * D, [15000, 16000, 18000], "4개입, 선물 박스 포장."],
-    ];
+    const used = this.first(`SELECT COUNT(*) AS c FROM items WHERE is_sample=1`).c;
     const salt = this.getSetting("pid_salt");
-    const ids = [];
-    for (let i = 0; i < S.length; i++) {
-      const [name, start, step, endAt, amounts, desc] = S[i];
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const [name0, start, desc] = POOL[(used + i) % POOL.length];
+      const name = "[샘플] " + name0;
+      const st = status === "mix" ? ["ready", "live", "done"][i % 3] : status;
+      const step = start >= 30000 ? 2000 : 1000;
+      // 마감 시각: 완료 = 이미 끝남, 진행중·준비중 = 며칠 뒤 (번갈아 가며 조금씩 다르게)
+      const endAt = st === "done" ? now - (1 + i) * H : now + (2 + (i % 3)) * D + i * 5 * 60e3;
+      const nb = st === "ready" ? 0 : 2 + (i % 3);
       const id = "s" + Date.now().toString(36) + randHex(2) + i;
       this.run(`INSERT INTO items(id,no,name,description,donor,start_price,step,raises,end_at,base_end_at,created_at,is_sample) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`,
         id, base + i + 1, name, desc, "샘플 기부자", start, step, JSON.stringify([1, 3, 5, 10].map((k) => k * step)), endAt, endAt, now);
-      for (let k = 0; k < amounts.length; k++) {
+      for (let k = 0; k < nb; k++) {
         const emp = String(999901 + ((i + k) % 5));
         const pid = (await sha256Hex(salt + ":" + emp)).slice(0, 16);
-        const at = Math.min(endAt, now) - (amounts.length - k) * 7 * 60e3;
-        this.run(`INSERT INTO bids(item_id,emp,phone,pid,amount,at) VALUES(?,?,?,?,?,?)`, id, emp, "0100000" + emp.slice(2), pid, amounts[k], at);
+        const at = Math.min(endAt, now) - (nb - k) * 7 * 60e3;
+        this.run(`INSERT INTO bids(item_id,emp,phone,pid,amount,at) VALUES(?,?,?,?,?,?)`, id, emp, "0100000" + emp.slice(2), pid, start + k * step * 3, at);
       }
-      ids.push({ id, no: base + i + 1, name });
+      out.push({ id, no: base + i + 1, name, status: st });
     }
     await this.afterItemChange();
-    return json({ ok: true, items: ids });
+    return json({ ok: true, items: out });
+  }
+
+  // 데이터 관리: 참여자 × 입찰한 물품 (입찰이 없으면 한 줄)
+  roster() {
+    const now = Date.now();
+    const items = Object.fromEntries(this.items().map((it) => [it.id, it]));
+    const tops = {};
+    for (const it of Object.values(items)) tops[it.id] = this.topBid(it.id, it.end_at);
+    const people = new Map();
+    for (const r of this.all(`SELECT emp, phone, created_at FROM sessions ORDER BY created_at ASC`)) {
+      const p = people.get(r.emp) || { emp: r.emp, phone: "", first: r.created_at };
+      if (r.phone) p.phone = r.phone; people.set(r.emp, p);
+    }
+    const bidsBy = new Map();
+    for (const b of this.all(`SELECT emp, phone, item_id, MAX(amount) AS mine FROM bids GROUP BY emp, item_id`)) {
+      if (!items[b.item_id]) continue;
+      if (!people.has(b.emp)) people.set(b.emp, { emp: b.emp, phone: b.phone || "", first: 0 });
+      else if (!people.get(b.emp).phone && b.phone) people.get(b.emp).phone = b.phone;
+      (bidsBy.get(b.emp) || bidsBy.set(b.emp, []).get(b.emp)).push(b);
+    }
+    const lastSms = {};
+    for (const r of this.all(`SELECT item_id, status FROM sms_log WHERE kind<>'test' ORDER BY id ASC`)) lastSms[r.item_id] = r.status;
+    const rows = [];
+    for (const p of people.values()) {
+      const list = bidsBy.get(p.emp) || [];
+      if (!list.length) { rows.push({ emp: p.emp, phone: fmtPhone(p.phone), item: null, state: "none", amount: null, mine: null, sms: null }); continue; }
+      for (const b of list) {
+        const it = items[b.item_id], top = tops[it.id], closed = now >= it.end_at;
+        const isTop = top && top.emp === p.emp;
+        const state = closed ? (isTop ? "won" : "lost") : isTop ? "leading" : "outbid";
+        rows.push({ emp: p.emp, phone: fmtPhone(p.phone), item: { id: it.id, no: it.no, name: it.name }, state,
+          amount: top ? top.amount : it.start_price, mine: b.mine, sms: state === "won" ? lastSms[it.id] || "none" : null });
+      }
+    }
+    const order = { won: 0, leading: 1, outbid: 2, lost: 3, none: 4 };
+    rows.sort((a, b) => order[a.state] - order[b.state] || (a.item?.no || 0) - (b.item?.no || 0) || a.emp.localeCompare(b.emp));
+    return rows;
   }
 
   async afterItemChange() {
@@ -719,7 +767,12 @@ export class Auction extends DurableObject {
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const dt = (ms) => (ms ? new Date(ms + 9 * 3600e3).toISOString().replace("T", " ").slice(0, 16) : "");
     let rows;
-    if (type === "wishes") {
+    if (type === "roster") {
+      const L = { won: "낙찰완료", leading: "진행중 · 최고가", outbid: "진행중 · 추월됨", lost: "미낙찰", none: "입찰 없음" };
+      const SM = { preview: "미리보기", sent: "발송완료", failed: "실패", none: "기록 없음" };
+      rows = [["번호", "사번", "휴대폰", "물품명", "상태", "낙찰가/현재가", "내 최고 입찰가", "문자"]];
+      this.roster().forEach((r, i) => rows.push([i + 1, r.emp, r.phone, r.item ? r.item.name : "", L[r.state], r.amount ?? "", r.mine ?? "", r.sms ? SM[r.sms] : ""]));
+    } else if (type === "wishes") {
       rows = [["번호", "물품명", "사번", "희망가", "등록시각(KST)"]];
       for (const r of this.all(`SELECT i.no,i.name,w.emp,w.amount,w.at FROM wishes w JOIN items i ON i.id=w.item_id ORDER BY i.no, w.amount DESC`))
         rows.push([r.no, r.name, r.emp, r.amount, dt(r.at)]);

@@ -383,3 +383,11 @@ table.t th{background:#eef5e4;color:var(--ink)}
 
 #s_desc,.rwarn span{white-space:pre-line;line-height:1.6}
 .tapnote,.agree span,.sched span,.note,.notice li{line-height:1.6}
+
+#rtable th[data-k]{cursor:pointer;user-select:none}
+#rtable th[data-k]::after{content:attr(data-dir);margin-left:4px;font-size:10px}
+.st{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:800;border:1.5px solid transparent;white-space:nowrap}
+.st-won{background:#ffe9e5;color:var(--red);border-color:var(--red)}
+.st-live{background:#eef5e4;color:var(--green2);border-color:var(--soft-line,#bcd7a8)}
+.st-lost{background:#f1efe8;color:#6f7d6a}
+.st-none{background:#fff;color:#9aa096;border-color:#e2e0d6}

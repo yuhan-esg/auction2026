@@ -55,7 +55,7 @@ function start() {
 async function load() { A.ov = await api("/api/admin/overview"); document.title = `${A.ov.eventName} · 관리자`; applyFavicon(A.ov.faviconVer && A.ov.hasFavicon ? A.ov.faviconVer : 0); }
 
 /* ---------------- shell ---------------- */
-const TABS = [["items", "물품 관리"], ["results", "낙찰 결과"], ["sms", "문자 발송"], ["log", "작업 기록"], ["data", "데이터 관리"]];
+const TABS = [["items", "물품 관리"], ["data", "데이터 관리"], ["sms", "문자 발송"], ["log", "작업 기록"], ["etc", "기타"]];
 function renderShell() {
   const ov = A.ov;
   $("#app").innerHTML = `<div class="wrap" style="padding-bottom:60px">
@@ -66,7 +66,8 @@ function renderShell() {
   $$("[data-t]").forEach((b) => (b.onclick = () => { A.tab = b.dataset.t; renderShell(); }));
   if (A.tab === "items") buildItems();
   if (A.tab === "sms") buildSms();
-  if (A.tab === "data") buildData();
+  if (A.tab === "etc") buildEtc();
+  if (A.tab === "data") buildRoster();
   if (A.tab === "log") buildLog();
   refresh();
 }
@@ -76,7 +77,7 @@ function refresh() {
   const sold = its.filter((i) => i.status === "sold");
   $("#astats").innerHTML = `<div class="stat"><b>${its.length}</b><span>물품</span></div><div class="stat"><b>${its.filter((i) => i.status === "live").length}</b><span>진행중</span></div><div class="stat"><b>${ov.stats.participants}</b><span>입장한 임직원</span></div><div class="stat"><b>${ov.stats.bids}</b><span>총 입찰</span></div><div class="stat"><b>${its.reduce((a, i) => a + (i.top ? i.top.amount : 0), 0).toLocaleString("ko-KR")}</b><span>현재 모금액(원)</span></div><div class="stat hl"><b>${sold.reduce((a, i) => a + i.top.amount, 0).toLocaleString("ko-KR")}</b><span>낙찰 확정액(원)</span></div>`;
   if (A.tab === "items") refreshItems();
-  if (A.tab === "results") renderResults();
+  if (A.tab === "data") loadRoster();
   if (A.tab === "sms") refreshSmsLog();
   if (A.tab === "log") buildLog();
 }
@@ -328,39 +329,62 @@ async function showBids(id) {
 }
 
 /* ---------------- results ---------------- */
-function renderResults() {
-  const its = A.ov.items;
-  const lastSms = {}; for (const s of A.ov.sms) if (!lastSms[s.item_id] && s.kind !== "test") lastSms[s.item_id] = s;
+const RS = { won: ["낙찰완료", "won"], leading: ["진행중 · 최고가", "live"], outbid: ["진행중 · 추월됨", "live"], lost: ["미낙찰", "lost"], none: ["입찰 없음", "none"] };
+const SMSL = { preview: ["미리보기", "preview"], sent: ["발송완료", "sent"], failed: ["실패", "failed"], none: ["기록 없음", "failed"] };
+function buildRoster() {
+  A.rf = A.rf || "all"; A.rsort = A.rsort || { k: null, dir: 1 };
   $("#abody").innerHTML = `
-  <div class="row" style="margin-bottom:10px"><button class="btn sm" id="dlW">낙찰 결과 엑셀(CSV) 받기</button><button class="btn ghost sm" id="dlB">전체 입찰 내역 CSV 받기</button><button class="btn ghost sm" id="dlP">참여자 명단 CSV 받기</button><button class="btn ghost sm" id="dlH">희망가 CSV 받기</button><button class="btn ghost sm" id="cpP">낙찰자 번호 복사</button></div>
-  <div class="tscroll"><table class="t"><thead><tr><th>No.</th><th>물품명</th><th>상태</th><th>낙찰가 / 현재가</th><th>사번</th><th>연락처</th><th>입찰</th><th>문자</th><th></th></tr></thead><tbody>
-  ${its.map((it) => { const w = it.winner, l = it.leader, s = lastSms[it.id]; return `<tr>
-    <td class="num"><b>${esc(it.no)}</b></td><td>${esc(it.name)}</td>
-    <td>${it.status === "sold" ? `<b style="color:var(--red)">낙찰완료</b>` : it.status === "unsold" ? "유찰" : `진행중 <span style="color:var(--muted);font-size:12px">~${fmtDT(it.endAt)}</span>`}</td>
-    <td class="num">${w ? `<b>${won(w.amount)}</b>` : l ? `<span style="color:var(--muted)">${won(l.amount)}</span>` : "-"}</td>
-    <td class="num">${esc(w ? w.emp : l ? l.emp : "-")}</td><td class="num">${esc(w ? w.phone || "(삭제됨)" : l ? l.phone : "-")}</td>
-    <td class="num">${it.bidCount}</td>
-    <td>${s ? `<span class="pill ${s.status}">${s.status === "preview" ? "미리보기" : s.status === "sent" ? "발송완료" : "실패"}</span>` : it.status === "sold" ? `<span class="pill failed">기록 없음</span>` : "-"}</td>
-    <td>${it.status === "sold" ? `<button class="btn ghost sm" data-n="${esc(it.id)}">${A.ov.smsMode === "live" ? "문자 다시 보내기" : "문자 미리보기 생성"}</button>` : ""}</td></tr>`; }).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--muted)">물품이 없습니다.</td></tr>`}
-  </tbody></table></div>
-  <p style="font-size:12px;color:var(--muted)">진행중 물품은 현재 최고가 입찰자가 회색으로 표시됩니다.<br>경매가 끝나는 즉시 낙찰이 확정되고 문자 발송(테스트 모드에서는 미리보기 기록)이 자동으로 실행됩니다.</p>`;
-  const dl = async (type) => {
+  <div class="row" style="justify-content:space-between;margin-bottom:10px">
+    <div class="row" id="rfilters"></div>
+    <div class="row"><button class="btn ghost sm" id="cpP">낙찰자 번호 복사</button><button class="btn sm" id="dlAll">전체 명단 엑셀(CSV) 받기</button></div>
+  </div>
+  <div class="tscroll"><table class="t" id="rtable"><thead><tr>
+    <th data-k="i">번호</th><th data-k="emp">사번</th><th data-k="phone">휴대폰 번호</th><th data-k="item">물품명</th><th data-k="state">상태</th><th data-k="amount">낙찰가/현재가</th><th data-k="sms">문자</th>
+  </tr></thead><tbody id="rbody"><tr><td colspan="7" style="color:var(--muted)">불러오는 중…</td></tr></tbody></table></div>
+  <p style="font-size:12px;color:var(--muted)">열 제목을 누르면 정렬돼요. 한 사람이 여러 물품에 입찰했다면 물품마다 한 줄씩 보여요.</p>`;
+  $$("#rtable th[data-k]").forEach((th) => (th.onclick = () => { const k = th.dataset.k; A.rsort = { k, dir: A.rsort.k === k ? -A.rsort.dir : 1 }; drawRoster(); }));
+  $("#dlAll").onclick = async () => {
     try {
-      const blob = await api("/api/admin/export.csv?type=" + type);
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `경매_${{ bids: "입찰내역", participants: "참여자명단", wishes: "희망가" }[type] || "낙찰결과"}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      const blob = await api("/api/admin/export.csv?type=roster");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `경매_전체명단_${new Date().toISOString().slice(0, 10)}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     } catch (e) { toast(e.message); }
   };
-  $("#dlW").onclick = () => dl("winners"); $("#dlB").onclick = () => dl("bids"); $("#dlP").onclick = () => dl("participants"); $("#dlH").onclick = () => dl("wishes");
   $("#cpP").onclick = async () => {
-    const t = its.filter((i) => i.winner && i.winner.phone).map((i) => i.winner.phone).join(", ");
+    const t = [...new Set((A.roster || []).filter((r) => r.state === "won" && r.phone).map((r) => r.phone))].join(", ");
     if (!t) return toast("낙찰자 번호가 없습니다");
     try { await navigator.clipboard.writeText(t); toast("복사되었습니다"); } catch (e) { modal({ title: "낙찰자 번호", body: t, cancel: null }); }
   };
-  $$("[data-n]").forEach((b) => (b.onclick = async () => {
-    const it = its.find((x) => x.id === b.dataset.n);
-    const live = A.ov.smsMode === "live";
-    if (!(await modal({ title: live ? "문자 다시 보내기" : "문자 미리보기 생성", body: `No.${it.no} ${it.name}\n낙찰자 ${it.winner.emp} (${it.winner.phone})${live ? "\n\n실제로 문자가 발송됩니다." : "\n\n테스트 모드라 실제로 보내지 않고 기록만 남깁니다."}`, ok: live ? "보내기" : "생성" }))) return;
-    try { await api(`/api/admin/items/${it.id}/notify`, { method: "POST" }); await load(); refresh(); toast(live ? "발송 요청했습니다" : "미리보기가 기록되었습니다"); } catch (e) { toast(e.message); }
+  loadRoster();
+}
+async function loadRoster() {
+  if (!$("#rbody")) return;
+  try { A.roster = (await api("/api/admin/roster")).rows; } catch (e) { return; }
+  drawRoster();
+}
+function drawRoster() {
+  const all = A.roster || [];
+  const F = [["all", "전체"], ["won", "낙찰완료"], ["live", "진행중"], ["lost", "미낙찰"], ["none", "입찰 없음"]];
+  const cnt = (k) => (k === "all" ? all.length : all.filter((r) => RS[r.state][1] === k).length);
+  $("#rfilters").innerHTML = F.map(([k, l]) => `<button class="chip ${A.rf === k ? "on" : ""}" data-rf="${k}">${l} <span style="opacity:.7">${cnt(k)}</span></button>`).join("");
+  $$("#rfilters [data-rf]").forEach((b) => (b.onclick = () => { A.rf = b.dataset.rf; drawRoster(); }));
+  let rows = all.map((r, i) => ({ ...r, i: i + 1 })).filter((r) => A.rf === "all" || RS[r.state][1] === A.rf);
+  const { k, dir } = A.rsort;
+  if (k) {
+    const val = (r) => k === "item" ? (r.item ? r.item.name : "") : k === "state" ? Object.keys(RS).indexOf(r.state) : k === "sms" ? (r.sms || "") : r[k] ?? "";
+    rows.sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "ko")) * dir; });
+  }
+  $$("#rtable th[data-k]").forEach((th) => { th.dataset.dir = th.dataset.k === k ? (dir > 0 ? "▲" : "▼") : ""; });
+  $("#rbody").innerHTML = rows.map((r) => `<tr>
+    <td class="num">${r.i}</td><td class="num">${esc(r.emp)}</td><td class="num">${esc(r.phone || "-")}</td>
+    <td>${r.item ? esc(r.item.name) : `<span style="color:var(--muted)">-</span>`}</td>
+    <td><span class="st st-${RS[r.state][1]}">${RS[r.state][0]}</span></td>
+    <td class="num">${r.amount != null ? won(r.amount) : "-"}</td>
+    <td>${r.state === "won" ? `<span class="pill ${SMSL[r.sms][1]}">${SMSL[r.sms][0]}</span> <button class="btn ghost sm" data-n="${esc(r.item.id)}">${A.ov.smsMode === "live" ? "다시 보내기" : "기록 남기기"}</button>` : "-"}</td></tr>`).join("")
+    || `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:18px">해당하는 사람이 없어요.</td></tr>`;
+  $$("#rbody [data-n]").forEach((b) => (b.onclick = async () => {
+    const it = A.ov.items.find((x) => x.id === b.dataset.n), live = A.ov.smsMode === "live";
+    if (!(await modal({ title: live ? "문자 다시 보내기" : "문자 기록 남기기", body: `${it.name}\n낙찰자 ${it.winner.emp} (${it.winner.phone})${live ? "\n\n실제로 문자가 발송됩니다." : "\n\n테스트 모드라 실제로 보내지 않고 기록만 남깁니다."}`, ok: live ? "보내기" : "기록 남기기" }))) return;
+    try { await api(`/api/admin/items/${it.id}/notify`, { method: "POST" }); await load(); loadRoster(); toast(live ? "발송 요청했습니다" : "기록을 남겼습니다"); } catch (e) { toast(e.message); }
   }));
 }
 
@@ -455,39 +479,54 @@ function drawLog() {
 }
 
 /* ---------------- data ---------------- */
-function buildData() {
+function buildEtc() {
   const hasSample = A.ov.items.some((i) => i.sample);
   $("#abody").innerHTML = `
   <div class="panel"><h3 style="margin:0 0 6px">샘플 물품 (미리보기용)</h3>
-    <p style="font-size:14px;color:#3a433d;margin:0 0 12px">화면이 어떻게 보이는지 확인할 수 있게 <b>[샘플]</b> 물품 8개를 넣습니다.<br>사진, 가상 입찰자(사번 9999xx), 이미 끝난 물품(낙찰완료·유찰), 3분 뒤 끝나는 물품이 함께 들어가요.<br>샘플 물품은 실제 발송 모드에서도 <b>문자가 나가지 않습니다</b>.</p>
-    <div class="row"><button class="btn sm" id="seed" ${hasSample ? "disabled" : ""}>샘플 물품 넣기</button><button class="btn ghost sm" id="unseed" ${hasSample ? "" : "disabled"}>샘플만 삭제</button><span class="msg" id="seedMsg"></span></div></div>
+    <p style="font-size:14px;color:#3a433d;margin:0 0 12px">화면 확인용 <b>[샘플]</b> 물품을 원하는 개수와 상태로 넣어요.<br>샘플 물품은 실제 발송 모드에서도 <b>문자가 나가지 않습니다</b>.</p>
+    <div class="row">
+      <select class="t" id="smpN" style="width:auto">${[1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20].map((n) => `<option value="${n}" ${n === 6 ? "selected" : ""}>${n}개</option>`).join("")}</select>
+      <select class="t" id="smpS" style="width:auto">
+        <option value="mix">상태: 골고루 섞어서</option><option value="ready">상태: 준비중 (입찰 없음)</option><option value="live">상태: 진행중 (입찰 있음)</option><option value="done">상태: 완료 (이미 낙찰)</option>
+      </select>
+      <button class="btn sm" id="seed">샘플 물품 넣기</button><button class="btn ghost sm" id="unseed" ${hasSample ? "" : "disabled"}>샘플 물품 삭제</button>
+    </div>
+    <div class="msg" id="seedMsg"></div></div>
+  <div class="panel" style="margin-top:16px"><h3 style="margin:0 0 6px">세부 자료 받기</h3>
+    <p style="font-size:14px;color:#3a433d;margin:0 0 12px">전체 명단은 ‘데이터 관리’ 탭에서 받아요.<br>아래는 필요할 때만 쓰는 세부 자료예요.</p>
+    <div class="row"><button class="btn ghost sm" data-dl="bids">전체 입찰 기록</button><button class="btn ghost sm" data-dl="wishes">희망가 기록</button><button class="btn ghost sm" data-dl="winners">물품별 낙찰 결과</button></div></div>
   <div class="panel" style="margin-top:16px"><h3 style="margin:0 0 6px">개인정보 삭제</h3>
     <p style="font-size:14px;color:#3a433d;margin:0 0 12px">낙찰 안내가 끝나면 수집한 휴대폰 번호를 모두 지워 주세요.<br>사번과 입찰 기록, 낙찰 결과는 남고 <b>번호만</b> 지워집니다.<br>참여자는 다시 로그인해야 합니다.</p>
     <button class="btn red sm" id="purge">휴대폰 번호 전체 삭제</button></div>
   <div class="panel" style="margin-top:16px"><h3 style="margin:0 0 6px">전체 초기화</h3>
     <p style="font-size:14px;color:#3a433d;margin:0 0 12px">물품, 사진, 입찰, 문자 기록을 모두 지웁니다.<br>테스트를 마치고 실제 행사를 시작하기 전에 사용하세요.</p>
     <button class="btn red sm" id="reset">전체 초기화</button></div>`;
+  const NAMES = { bids: "입찰기록", wishes: "희망가", winners: "물품별낙찰결과" };
+  $$("[data-dl]").forEach((b) => (b.onclick = async () => {
+    try { const blob = await api("/api/admin/export.csv?type=" + b.dataset.dl); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `경매_${NAMES[b.dataset.dl]}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); } catch (e) { toast(e.message); }
+  }));
   $("#seed").onclick = async () => {
     const m = $("#seedMsg"); $("#seed").disabled = true;
     try {
       m.className = "msg"; m.textContent = "샘플 물품 만드는 중…";
-      const r = await api("/api/admin/samples", { method: "POST" });
+      const r = await api("/api/admin/samples", { method: "POST", body: JSON.stringify({ count: Number($("#smpN").value), status: $("#smpS").value }) });
       const COLORS = [["#1f4d3a", "#2d6b52"], ["#8c5a32", "#b07a4b"], ["#b8322a", "#d4584f"], ["#3c508c", "#5a70b0"], ["#28282f", "#4a4a55"], ["#9678aa", "#b49cc6"], ["#46705a", "#6a947c"], ["#781e32", "#9e3a50"]];
       let n = 0;
       for (let i = 0; i < r.items.length; i++) {
-        const it = r.items[i], [c1, c2] = COLORS[i % COLORS.length], title = it.name.replace("[샘플] ", "");
+        const it = r.items[i], [c1, c2] = COLORS[(it.no + i) % COLORS.length], title = it.name.replace("[샘플] ", "");
         m.textContent = `사진 넣는 중… ${++n}/${r.items.length}`;
         await api(`/api/admin/items/${it.id}/image`, { method: "PUT", body: JSON.stringify({ dataUrl: sampleImg(900, 675, c1, c2, title, "대표 사진") }) });
         for (const [k, sub] of [["제품 소개", "이런 제품이에요"], ["구성품", "함께 드리는 것"], ["상태", "실물 사진 자리"]].entries())
           await api(`/api/admin/items/${it.id}/photos`, { method: "POST", body: JSON.stringify({ dataUrl: sampleImg(1000, 1300, k % 2 ? c2 : c1, k % 2 ? c1 : c2, `상세 사진 ${k + 1} · ${sub[0]}`, sub[1]) }) });
       }
-      m.className = "msg ok"; m.textContent = "샘플 물품을 넣었습니다. 경매장 화면과 다른 탭에서 확인해 보세요.";
+      m.className = "msg ok"; m.textContent = `샘플 물품 ${r.items.length}개를 넣었습니다.`;
       await load(); refresh(); $("#unseed").disabled = false;
-    } catch (e) { m.className = "msg err"; m.textContent = e.message; $("#seed").disabled = false; }
+    } catch (e) { m.className = "msg err"; m.textContent = e.message; }
+    $("#seed").disabled = false;
   };
   $("#unseed").onclick = async () => {
-    if (!(await modal({ title: "샘플만 삭제", body: "[샘플] 물품과 그 입찰·사진·문자 기록만 지웁니다.\n직접 등록한 물품은 그대로 남아요.", ok: "삭제", danger: true }))) return;
-    try { const r = await api("/api/admin/samples", { method: "DELETE" }); toast(`샘플 ${r.deleted}개를 삭제했습니다`); await load(); refresh(); $("#seed").disabled = false; $("#unseed").disabled = true; } catch (e) { toast(e.message); }
+    if (!(await modal({ title: "샘플 물품 삭제", body: "[샘플] 물품과 그 입찰·사진·문자 기록만 지웁니다.\n직접 등록한 물품은 그대로 남아요.", ok: "삭제", danger: true }))) return;
+    try { const r = await api("/api/admin/samples", { method: "DELETE" }); toast(`샘플 ${r.deleted}개를 삭제했습니다`); await load(); refresh(); $("#unseed").disabled = true; } catch (e) { toast(e.message); }
   };
   $("#purge").onclick = async () => {
     if (!(await modal({ title: "휴대폰 번호 전체 삭제", body: "모든 참여자의 휴대폰 번호를 삭제합니다.\n되돌릴 수 없습니다.\n먼저 ‘낙찰 결과’에서 낙찰 결과·참여자 명단 CSV를 받아 두세요.", ok: "삭제", danger: true }))) return;
