@@ -100,7 +100,7 @@ function buildItems() {
       <div><label class="f" for="s_ext">마감 직전 연장 (초)</label><input class="t" id="s_ext" inputmode="numeric" value="${sc.extendSeconds ?? 30}"></div>
     </div>
     <p style="font-size:12.5px;color:var(--muted);margin:8px 0 0" id="s_desc"></p>
-    <label class="f" for="s_notice">참여자 화면 입찰 안내 <span style="font-weight:400;color:var(--muted)">(목록 화면 위에 보여요 · 한 줄에 하나씩 · 비우면 숨김)</span></label>
+    <label class="f" for="s_notice">참여자 화면 입찰 안내 <span style="font-weight:400;color:var(--muted)">(목록 화면 위에 보여요 · 한 줄에 하나씩 · **이렇게** 감싸면 굵게 · 비우면 숨김)</span></label>
     <textarea class="t" id="s_notice" rows="4" maxlength="1500">${esc(A.ov.notice || "")}</textarea>
     <div class="row" style="margin-top:6px"><button type="button" class="btn ghost sm" id="s_noticeReset">기본 안내로</button><span style="font-size:12px;color:var(--muted)">예) 담당자: 총무팀 홍길동 (내선 1234)</span></div>
     <div class="row" style="margin-top:10px"><button class="btn sm" id="s_save">일정 저장</button><span class="msg" id="s_msg"></span></div>

@@ -248,8 +248,11 @@ function renderNotice() {
   const ul = $("ul", el);
   text.split("\n").map((l) => l.trim()).filter(Boolean).forEach((l) => {
     const li = document.createElement("li");
-    // 한 줄에 문장이 여러 개면 문장마다 줄을 나눠 읽기 쉽게
-    l.replace(/^[-•·]\s*/, "").split(/(?<=[.?!])\s+(?=\S)/).forEach((sent, i) => { if (i) li.appendChild(document.createElement("br")); li.appendChild(document.createTextNode(sent)); });
+    // **굵게** 표시만 지원 (나머지는 그대로 글자로)
+    l.replace(/^[-•·]\s*/, "").split(/(\*\*[^*]+\*\*)/).forEach((part) => {
+      if (/^\*\*[^*]+\*\*$/.test(part)) { const b = document.createElement("b"); b.textContent = part.slice(2, -2); li.appendChild(b); }
+      else if (part) li.appendChild(document.createTextNode(part));
+    });
     ul.appendChild(li);
   });
   $(".nt-x", el).onclick = () => { try { sessionStorage.setItem("notice.hide", text); } catch (e) {} el.dataset.text = ""; renderNotice(); };
@@ -258,7 +261,7 @@ function schedBanner() {
   const sc = S.schedule;
   if (!sc.startAt) return "";
   if (started()) return "";
-  return `<div class="sched"><div><b>${wishOpen() ? "🎁 지금은 희망가 접수 기간이에요" : "⏳ 희망가 접수가 끝났어요"}</b><span>${wishOpen() ? `갖고 싶은 물품에 희망가를 남겨 주세요.<br>금액은 다른 사람에게 공개되지 않아요.${sc.wishEndAt ? ` · 접수 마감 ${fmtDTfull(sc.wishEndAt)}` : ""}` : "경매가 시작되면 바로 입찰할 수 있어요."}</span></div>
+  return `<div class="sched"><div><b>${wishOpen() ? "🎁 지금은 희망가 접수 기간이에요" : "⏳ 희망가 접수가 끝났어요"}</b><span>${wishOpen() ? `갖고 싶은 물품에 희망가를 남겨 주세요. 금액은 다른 사람에게 공개되지 않아요.${sc.wishEndAt ? ` · 접수 마감 ${fmtDTfull(sc.wishEndAt)}` : ""}` : "경매가 시작되면 바로 입찰할 수 있어요."}</span></div>
     <div class="sched-r"><span>경매 시작</span><b>${fmtDTfull(sc.startAt)}</b><span class="cd" data-start="${sc.startAt}"></span></div></div>`;
 }
 function updateCd(el) {
