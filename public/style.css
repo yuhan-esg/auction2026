@@ -170,6 +170,31 @@ table.t td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .pbtns{display:flex;gap:2px;margin-top:4px}
 .pbtns button{flex:1;border:1px solid var(--line);background:#fff;border-radius:6px;font-size:11px;padding:2px 0}
 .pbtns button:disabled{opacity:.35;cursor:default}
+.b-wish{background:var(--gold);color:#fff}
+.sched{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:linear-gradient(135deg,#1f4d3a,#2d6b52);color:#fdf8ec;border-radius:14px;padding:14px 18px;margin:16px 0 4px}
+.sched b{display:block;font-size:16px}
+.sched span{font-size:13px;opacity:.9}
+.sched-r{text-align:right}
+.sched-r b{font-size:17px}
+.sched .cd{display:block;font-size:13px;color:#ffe08a;opacity:1;font-weight:700}
+.wishbox{background:#fdf6e3;border:1px solid #efd9a3;border-radius:12px;padding:14px;margin-top:4px}
+.wishbox p{font-size:13px;color:#6b5414;margin:6px 0 4px}
+.mywish{font-size:14px;margin:8px 0 0}
+html{overflow-y:scroll;scrollbar-gutter:stable}
+.tapnote{font-size:12.5px;color:var(--muted);margin:2px 0 8px}
+.tapfirst{width:100%;margin-bottom:8px;padding:13px;font-size:16px}
+.taps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.tap{border:1.5px solid var(--green);background:#fff;color:var(--green);border-radius:12px;padding:14px 4px;display:flex;flex-direction:column;align-items:center;gap:3px;transition:transform .08s,background .15s}
+.tap b{font-size:17px;font-weight:900}
+.tap span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:-.2px}
+.tap:hover:not(:disabled){background:var(--green);color:#fff}
+.tap:hover:not(:disabled) span{color:#d9eadf}
+.tap:active:not(:disabled){transform:scale(.96)}
+.tap:disabled{border-color:var(--line);color:#b7b3a6;cursor:not-allowed}
+@media (max-width:420px){.taps{grid-template-columns:repeat(2,1fr)}}
+.raisegrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.raisegrid .t{padding:9px 8px;font-size:14px}
+.rprev{display:block;font-size:11.5px;color:var(--green);font-weight:700;margin-top:2px;text-align:center}
 .hidden{display:none!important}
 .brand,.who,.hbtn,.live{white-space:nowrap}
 @media (max-width:560px){

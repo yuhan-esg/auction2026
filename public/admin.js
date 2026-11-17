@@ -52,7 +52,7 @@ function start() {
   });
   setInterval(() => $$(".cd[data-end]").forEach((el) => { const l = Number(el.dataset.end) - Date.now(); el.textContent = l > 0 ? "진행중" : "종료"; }), 1000);
 }
-async function load() { A.ov = await api("/api/admin/overview"); }
+async function load() { A.ov = await api("/api/admin/overview"); document.title = `${A.ov.eventName} · 관리자`; }
 
 /* ---------------- shell ---------------- */
 const TABS = [["items", "물품 관리"], ["results", "낙찰 결과"], ["sms", "문자 발송"], ["data", "데이터 관리"]];
@@ -84,13 +84,28 @@ const statusText = (i) => (i.status === "sold" ? "낙찰완료" : i.status === "
 function defaultEnd() { const d = new Date(); d.setDate(d.getDate() + 7); d.setHours(18, 0, 0, 0); return d.getTime(); }
 function nextNo() { return (A.ov.items.reduce((m, x) => Math.max(m, x.no || 0), 0) || 0) + 1; }
 function buildItems() {
+  const sc = A.ov.schedule || {};
   $("#abody").innerHTML = `
+  <div class="panel" style="margin-bottom:16px"><h3 style="margin:0 0 4px">경매 일정</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 6px">경매 시작 전까지는 입찰이 막히고 <b>희망가 접수</b>만 받아요. 시작 시각을 비워 두면 바로 입찰할 수 있어요.</p>
+    <div><label class="f" for="s_name" style="margin-top:4px">행사 이름 <span style="font-weight:400;color:var(--muted)">(브라우저 탭, 화면 제목, 문자의 {행사명}에 쓰여요)</span></label><input class="t" id="s_name" maxlength="40" value="${esc(A.ov.eventName)}" style="max-width:420px"></div>
+    <div class="formgrid" style="grid-template-columns:1fr 1fr 1fr">
+      <div><label class="f" for="s_wish">희망가 접수 마감 <span style="font-weight:400;color:var(--muted)">(비우면 시작 전까지)</span></label><input class="t" type="datetime-local" id="s_wish" value="${sc.wishEndAt ? toLocalInput(sc.wishEndAt) : ""}"></div>
+      <div><label class="f" for="s_start">경매 시작 시각</label><input class="t" type="datetime-local" id="s_start" value="${sc.startAt ? toLocalInput(sc.startAt) : ""}"></div>
+      <div><label class="f" for="s_ext">마감 직전 연장 (초)</label><input class="t" id="s_ext" inputmode="numeric" value="${sc.extendSeconds ?? 30}"></div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin:8px 0 0" id="s_desc"></p>
+    <div class="row" style="margin-top:10px"><button class="btn sm" id="s_save">일정 저장</button><span class="msg" id="s_msg"></span></div>
+  </div>`;
+  $("#abody").insertAdjacentHTML("beforeend", `
   <div class="panel" id="formPanel"><h3 style="margin:0 0 6px" id="ftitle">물품 등록</h3>
     <form id="ifm" class="formgrid" novalidate>
       <div><label class="f" for="f_no">번호</label><input class="t" id="f_no" inputmode="numeric"></div>
       <div><label class="f" for="f_name">물품명</label><input class="t" id="f_name" maxlength="100"></div>
-      <div><label class="f" for="f_start">시작가 (원)</label><input class="t" id="f_start" inputmode="numeric"></div>
-      <div><label class="f" for="f_step">입찰 단위 (원)</label><input class="t" id="f_step" inputmode="numeric"></div>
+      <div><label class="f" for="f_start">시작가 (원) <span style="font-weight:400;color:var(--muted)">0 = 추후 공개</span></label><input class="t" id="f_start" inputmode="numeric"></div>
+      <div><label class="f" for="f_r0">입찰 버튼 금액 4개 (원) <span style="font-weight:400;color:var(--muted)">누르면 현재가에 이만큼 더해서 바로 입찰</span></label>
+        <div class="raisegrid">${[0, 1, 2, 3].map((i) => `<div><input class="t" id="f_r${i}" inputmode="numeric" aria-label="버튼 ${i + 1}"><span class="rprev" id="f_rp${i}"></span></div>`).join("")}</div>
+        <div class="row" style="margin-top:6px">${[[1000, 3000, 5000, 10000], [5000, 10000, 30000, 50000], [10000, 30000, 50000, 100000]].map((p) => `<button type="button" class="chip" data-preset="${p.join(",")}">${p.map(raiseLabel).join(" · ")}</button>`).join("")}</div></div>
       <div><label class="f" for="f_end">경매 종료 시각</label><input class="t" type="datetime-local" id="f_end"></div>
       <div><label class="f" for="f_donor">기부자 (선택)</label><input class="t" id="f_donor" maxlength="60" placeholder="예) 경영지원팀 홍길동"></div>
       <div class="full"><label class="f" for="f_desc">상세 설명</label><textarea class="t" id="f_desc" rows="4" maxlength="3000" placeholder="상태, 구성품, 사이즈 등"></textarea></div>
@@ -101,9 +116,23 @@ function buildItems() {
   <div class="panel" style="margin-top:16px">
     <div class="row" style="justify-content:space-between;margin-bottom:10px"><h3 style="margin:0">등록된 물품</h3>
       <div class="row"><input class="t" type="datetime-local" id="bulkEnd" style="width:auto;padding:6px 9px;font-size:13px"><button class="btn ghost sm" id="bulkBtn">전체 종료 시각 일괄 변경</button></div></div>
-    <div class="tscroll"><table class="t"><thead><tr><th>No.</th><th>사진</th><th>물품명</th><th>시작가</th><th>현재가</th><th>입찰</th><th>종료</th><th>상태</th><th></th></tr></thead><tbody id="itbody"></tbody></table></div>
-  </div>`;
-  ["f_start", "f_step"].forEach((i) => moneyInput($("#" + i)));
+    <div class="tscroll"><table class="t"><thead><tr><th>No.</th><th>사진</th><th>물품명</th><th>희망가</th><th>시작가</th><th>현재가</th><th>입찰</th><th>종료</th><th>상태</th><th></th></tr></thead><tbody id="itbody"></tbody></table></div>
+  </div>`);
+  const ext = $("#s_ext");
+  const desc = () => { const n = Number(digits(ext.value)) || 0; $("#s_desc").textContent = n ? `마감 ${n}초 안에 입찰이 들어오면 남은 시간을 ${n}초로 다시 맞춥니다. 횟수 제한 없이, 마지막 입찰 뒤 ${n}초 동안 아무도 안 부르면 끝나요.` : "연장을 끕니다. 정해진 마감 시각에 바로 끝나요."; };
+  ext.addEventListener("input", () => { ext.value = digits(ext.value).slice(0, 3); desc(); }); desc();
+  $("#s_save").onclick = async () => {
+    const v = (id) => ($("#" + id).value ? new Date($("#" + id).value).getTime() : null);
+    const startAt = v("s_start"), wishEndAt = v("s_wish");
+    const m = $("#s_msg");
+    if (wishEndAt && startAt && wishEndAt > startAt) { m.className = "msg err"; m.textContent = "희망가 마감은 경매 시작보다 앞이어야 해요."; return; }
+    const early = A.ov.items.filter((i) => startAt && i.endAt <= startAt);
+    if (early.length && !(await modal({ title: "확인해 주세요", body: `종료 시각이 경매 시작보다 빠른 물품이 ${early.length}개 있어요.\n(예: No.${early[0].no} ${early[0].name})\n물품별 종료 시각도 확인해 주세요.`, ok: "그래도 저장" }))) return;
+    try { await api("/api/admin/schedule", { method: "PUT", body: JSON.stringify({ startAt, wishEndAt, extendSeconds: Number(digits(ext.value)) || 0, eventName: $("#s_name").value }) }); m.className = "msg ok"; m.textContent = "저장되었습니다"; await load(); refresh(); } catch (e) { m.className = "msg err"; m.textContent = e.message; }
+  };
+  ["f_start", "f_r0", "f_r1", "f_r2", "f_r3"].forEach((i) => moneyInput($("#" + i)));
+  [0, 1, 2, 3].forEach((i) => $("#f_r" + i).addEventListener("input", previewRaises));
+  $$("[data-preset]").forEach((b) => (b.onclick = () => setRaises(b.dataset.preset.split(",").map(Number))));
   $("#bulkEnd").value = toLocalInput(defaultEnd());
   resetForm();
   $("#f_img").addEventListener("change", async (e) => {
@@ -139,11 +168,19 @@ function renderPlist() {
   $$("[data-dn]", box).forEach((b) => (b.onclick = () => mv(+b.dataset.dn, +b.dataset.dn + 1)));
   $$("[data-rm]", box).forEach((b) => (b.onclick = () => { const [r] = L.splice(+b.dataset.rm, 1); if (r.id) A.form.removed.push(r.id); A.form.photosChanged = true; renderPlist(); }));
 }
+function raiseLabel(v) {
+  v = Number(v);
+  if (v >= 10000 && v % 1000 === 0) return `+${(v / 10000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}만원`;
+  if (v >= 1000 && v % 100 === 0) return `+${(v / 1000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}천원`;
+  return `+${v.toLocaleString("ko-KR")}원`;
+}
+function setRaises(arr) { [0, 1, 2, 3].forEach((i) => ($("#f_r" + i).value = Number(arr[i] || 0).toLocaleString("ko-KR"))); previewRaises(); }
+function previewRaises() { [0, 1, 2, 3].forEach((i) => { const v = Number(digits($("#f_r" + i).value)); $("#f_rp" + i).textContent = v ? raiseLabel(v) : ""; }); }
 function resetForm() {
   A.form = { id: null, img: null, imgChanged: false, photos: [], removed: [], photosChanged: false };
   renderPlist();
   $("#ifm").reset(); $("#ftitle").textContent = "물품 등록"; $("#f_save").textContent = "등록하기"; $("#f_cancel").classList.add("hidden"); showPrev(null);
-  $("#f_no").value = nextNo(); $("#f_start").value = "10,000"; $("#f_step").value = "1,000"; $("#f_end").value = toLocalInput(defaultEnd()); setMsg("");
+  $("#f_no").value = nextNo(); $("#f_start").value = "10,000"; setRaises([1000, 3000, 5000, 10000]); $("#f_end").value = toLocalInput(defaultEnd()); setMsg("");
 }
 async function editItem(id) {
   const it = A.ov.items.find((x) => x.id === id); if (!it) return;
@@ -153,7 +190,7 @@ async function editItem(id) {
     if (A.form.id !== id) return;
     A.form.photos = (d.photos || []).map((pid) => ({ id: pid, src: "/api/photo/" + pid })); renderPlist();
   }).catch(() => {});
-  $("#f_no").value = it.no; $("#f_name").value = it.name; $("#f_start").value = Number(it.start).toLocaleString("ko-KR"); $("#f_step").value = Number(it.step).toLocaleString("ko-KR");
+  $("#f_no").value = it.no; $("#f_name").value = it.name; $("#f_start").value = Number(it.start).toLocaleString("ko-KR"); setRaises(it.raises);
   $("#f_end").value = toLocalInput(it.endAt); $("#f_donor").value = it.donor || ""; $("#f_desc").value = it.description || ""; showPrev(A.form.img);
   $("#ftitle").textContent = `No.${it.no} 수정`; $("#f_save").textContent = "저장하기"; $("#f_cancel").classList.remove("hidden"); setMsg("");
   $("#formPanel").scrollIntoView({ behavior: "smooth" });
@@ -161,16 +198,16 @@ async function editItem(id) {
 async function saveItem(e) {
   e.preventDefault();
   const n = (id) => Number(digits($("#" + id).value));
-  const data = { no: n("f_no"), name: $("#f_name").value.trim(), start: n("f_start"), step: n("f_step"), endAt: new Date($("#f_end").value).getTime(), donor: $("#f_donor").value.trim(), description: $("#f_desc").value.trim() };
+  const data = { no: n("f_no"), name: $("#f_name").value.trim(), start: n("f_start"), raises: [0, 1, 2, 3].map((i) => n("f_r" + i)), endAt: new Date($("#f_end").value).getTime(), donor: $("#f_donor").value.trim(), description: $("#f_desc").value.trim() };
   if (!data.no) return setMsg("번호를 입력해 주세요.", true);
   if (!data.name) return setMsg("물품명을 입력해 주세요.", true);
-  if (!data.step) return setMsg("입찰 단위를 입력해 주세요.", true);
+  if (data.raises.some((x) => !x)) return setMsg("입찰 버튼 금액 4개를 모두 입력해 주세요.", true);
   if (!data.endAt) return setMsg("종료 시각을 입력해 주세요.", true);
   const editing = A.form.id;
   if (editing) {
     const old = A.ov.items.find((x) => x.id === editing);
-    if (old && old.bidCount && (data.start !== old.start || data.step !== old.step) &&
-      !(await modal({ title: "입찰이 있는 물품입니다", body: `이미 입찰 ${old.bidCount}건이 있습니다.\n시작가·입찰 단위를 바꾸면 다음 최소 입찰가가 달라집니다.`, ok: "그래도 저장" }))) return;
+    if (old && old.bidCount && (data.start !== old.start || data.raises.join() !== (old.raises || []).join()) &&
+      !(await modal({ title: "입찰이 있는 물품입니다", body: `이미 입찰 ${old.bidCount}건이 있습니다.\n시작가·버튼 금액을 바꾸면 다음 입찰 금액이 달라집니다.`, ok: "그래도 저장" }))) return;
   }
   $("#f_save").disabled = true;
   try {
@@ -199,20 +236,39 @@ async function saveItem(e) {
 function refreshItems() {
   const tb = $("#itbody"); if (!tb) return;
   const its = A.ov.items;
-  if (!its.length) { tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">등록된 물품이 없습니다. 위에서 물품을 등록해 주세요.</td></tr>`; return; }
+  if (!its.length) { tb.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">등록된 물품이 없습니다. 위에서 물품을 등록해 주세요.</td></tr>`; return; }
   tb.innerHTML = its.map((it) => `<tr>
     <td class="num"><b>${esc(it.no)}</b></td>
     <td>${imgUrl(it) ? `<img src="${imgUrl(it)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:5px;display:block">` : "-"}</td>
-    <td>${esc(it.name)}</td><td class="num">${won(it.start)}</td><td class="num">${it.top ? won(it.top.amount) : "-"}</td>
+    <td>${esc(it.name)}</td>
+    <td class="num">${it.wish.count ? `<button class="btn ghost sm" data-w="${esc(it.id)}" title="중앙값 ${won(it.wish.median)} · 최저 ${won(it.wish.min)} · 최고 ${won(it.wish.max)}">${it.wish.count}명 · 평균 ${won(it.wish.avg)}</button>` : `<span style="color:var(--muted)">-</span>`}</td>
+    <td class="num">${it.start ? won(it.start) : `<span style="color:var(--red)">미정</span>`}</td><td class="num">${it.top ? won(it.top.amount) : "-"}</td>
     <td class="num">${it.bidCount}</td><td class="num">${fmtDT(it.endAt)}</td><td>${statusText(it)}</td>
     <td style="white-space:nowrap"><button class="btn ghost sm" data-b="${esc(it.id)}">입찰내역</button> <button class="btn ghost sm" data-e="${esc(it.id)}">수정</button> <button class="btn ghost sm" data-d="${esc(it.id)}" style="color:var(--red)">삭제</button></td></tr>`).join("");
   $$("[data-e]", tb).forEach((b) => (b.onclick = () => editItem(b.dataset.e)));
   $$("[data-b]", tb).forEach((b) => (b.onclick = () => showBids(b.dataset.b)));
+  $$("[data-w]", tb).forEach((b) => (b.onclick = () => showWishes(b.dataset.w)));
   $$("[data-d]", tb).forEach((b) => (b.onclick = async () => {
     const it = its.find((x) => x.id === b.dataset.d);
     if (!(await modal({ title: "물품 삭제", body: `No.${it.no} ${it.name}을(를) 삭제합니다.${it.bidCount ? `\n입찰 ${it.bidCount}건도 함께 삭제됩니다.` : ""}`, ok: "삭제", danger: true }))) return;
     try { await api("/api/admin/items/" + it.id, { method: "DELETE" }); toast("삭제되었습니다"); if (A.form.id === it.id) resetForm(); } catch (e) { toast(e.message); }
   }));
+}
+async function showWishes(id) {
+  const it = A.ov.items.find((x) => x.id === id), w = it.wish;
+  const { wishes } = await api(`/api/admin/items/${id}/wishes`);
+  const m = document.createElement("div"); m.className = "modal";
+  m.innerHTML = `<div class="mbox" style="max-width:560px"><h3>No.${esc(it.no)} ${esc(it.name)} · 희망가 ${w.count}명</h3>
+    <div class="stats" style="margin:8px 0 12px"><div class="stat"><b>${won(w.avg)}</b><span>평균</span></div><div class="stat"><b>${won(w.median)}</b><span>중앙값</span></div><div class="stat"><b>${won(w.min)}</b><span>최저</span></div><div class="stat"><b>${won(w.max)}</b><span>최고</span></div></div>
+    <div class="tscroll" style="max-height:45vh;overflow:auto;margin-bottom:12px"><table class="t"><thead><tr><th>사번</th><th>희망가</th><th>남긴 시각</th></tr></thead><tbody>
+    ${wishes.map((x) => `<tr><td class="num">${esc(x.emp)}</td><td class="num"><b>${won(x.amount)}</b></td><td class="num">${fmtDTs(x.at)}</td></tr>`).join("")}</tbody></table></div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 12px">시작가는 ‘수정’에서 직접 넣어 주세요. 터무니없는 금액이 섞여 있으면 평균보다 <b>중앙값</b>이 더 믿을 만해요.</p>
+    <div class="row"><button class="btn ghost" data-close>닫기</button><button class="btn" data-edit>이 물품 시작가 수정</button></div></div>`;
+  m.addEventListener("click", (e) => {
+    if (e.target === m || e.target.dataset.close != null) m.remove();
+    if (e.target.dataset.edit != null) { m.remove(); editItem(id); setTimeout(() => $("#f_start").focus(), 300); }
+  });
+  document.body.appendChild(m);
 }
 async function showBids(id) {
   const it = A.ov.items.find((x) => x.id === id);
@@ -238,7 +294,7 @@ function renderResults() {
   const its = A.ov.items;
   const lastSms = {}; for (const s of A.ov.sms) if (!lastSms[s.item_id] && s.kind !== "test") lastSms[s.item_id] = s;
   $("#abody").innerHTML = `
-  <div class="row" style="margin-bottom:10px"><button class="btn sm" id="dlW">낙찰 결과 엑셀(CSV) 받기</button><button class="btn ghost sm" id="dlB">전체 입찰 내역 CSV 받기</button><button class="btn ghost sm" id="dlP">참여자 명단 CSV 받기</button><button class="btn ghost sm" id="cpP">낙찰자 번호 복사</button></div>
+  <div class="row" style="margin-bottom:10px"><button class="btn sm" id="dlW">낙찰 결과 엑셀(CSV) 받기</button><button class="btn ghost sm" id="dlB">전체 입찰 내역 CSV 받기</button><button class="btn ghost sm" id="dlP">참여자 명단 CSV 받기</button><button class="btn ghost sm" id="dlH">희망가 CSV 받기</button><button class="btn ghost sm" id="cpP">낙찰자 번호 복사</button></div>
   <div class="tscroll"><table class="t"><thead><tr><th>No.</th><th>물품명</th><th>상태</th><th>낙찰가 / 현재가</th><th>사번</th><th>연락처</th><th>입찰</th><th>문자</th><th></th></tr></thead><tbody>
   ${its.map((it) => { const w = it.winner, l = it.leader, s = lastSms[it.id]; return `<tr>
     <td class="num"><b>${esc(it.no)}</b></td><td>${esc(it.name)}</td>
@@ -253,10 +309,10 @@ function renderResults() {
   const dl = async (type) => {
     try {
       const blob = await api("/api/admin/export.csv?type=" + type);
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `경매_${{ bids: "입찰내역", participants: "참여자명단" }[type] || "낙찰결과"}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `경매_${{ bids: "입찰내역", participants: "참여자명단", wishes: "희망가" }[type] || "낙찰결과"}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     } catch (e) { toast(e.message); }
   };
-  $("#dlW").onclick = () => dl("winners"); $("#dlB").onclick = () => dl("bids"); $("#dlP").onclick = () => dl("participants");
+  $("#dlW").onclick = () => dl("winners"); $("#dlB").onclick = () => dl("bids"); $("#dlP").onclick = () => dl("participants"); $("#dlH").onclick = () => dl("wishes");
   $("#cpP").onclick = async () => {
     const t = its.filter((i) => i.winner && i.winner.phone).map((i) => i.winner.phone).join(", ");
     if (!t) return toast("낙찰자 번호가 없습니다");

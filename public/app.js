@@ -1,10 +1,14 @@
-import { $, $$, esc, won, fmtDT, fmtDTfull, countdown, digits, toast, modal, GIFT_PH, imgUrl, connectLive } from "./common.js";
+import { $, $$, esc, won, fmtDT, fmtDTs, fmtDTfull, countdown, digits, toast, modal, GIFT_PH, imgUrl, connectLive } from "./common.js";
 
 const LS = "auction.session.v1";
 const S = {
   items: [], loaded: false, offset: 0, event: "연말 나눔 경매",
   me: null, filter: "all", prevPrice: {}, detail: null, detailId: null, busy: false,
+  schedule: { startAt: null, wishEndAt: null }, myWishes: {},
 };
+// 일정은 서버 시각 기준으로 매번 계산
+const started = () => !S.schedule.startAt || now() >= S.schedule.startAt;
+const wishOpen = () => !started() && (!S.schedule.wishEndAt || now() < S.schedule.wishEndAt);
 const now = () => Date.now() + S.offset;
 const maskEmp = (e) => (e ? e.slice(0, 2) + "**" + e.slice(4) : "");
 
@@ -26,18 +30,20 @@ function st(it) {
   const closed = left <= 0 || it.status !== "live";
   const mineTop = !!(S.me && it.top && it.top.pid === S.me.pid);
   const mineIn = !!(S.me && S.myItems && S.myItems.has(it.id));
-  return { left, closed, sold: !!it.top, mineTop, mineIn };
+  const pre = !started() && !closed;
+  return { left, closed, sold: !!it.top, mineTop, mineIn, pre, myWish: S.myWishes[it.id] || null };
 }
 
 /* ---------------- boot ---------------- */
 async function boot() {
   S.me = loadMe();
   S.myItems = new Set(JSON.parse(localStorage.getItem(LS + ".items") || "[]"));
-  if (S.me) { try { const m = await api("/api/me"); S.me.isAdmin = !!m.isAdmin; saveMe(S.me); } catch (e) { if (e.status === 401) { S.me = null; saveMe(null); } } }
+  if (S.me) { try { const m = await api("/api/me"); S.me.isAdmin = !!m.isAdmin; saveMe(S.me); await loadMy(); } catch (e) { if (e.status === 401) { S.me = null; saveMe(null); } } }
   connectLive({
     onState: (d) => {
       S.offset = d.now - Date.now();
       S.items = d.items; S.loaded = true;
+      if (d.schedule) S.schedule = d.schedule;
       if (d.eventName && d.eventName !== S.event) { S.event = d.eventName; $("#eventName").textContent = d.eventName; document.title = d.eventName; }
       if (S.detailId) loadDetail(S.detailId);
       render();
@@ -46,7 +52,7 @@ async function boot() {
       S.offset = d.now - Date.now();
       const i = S.items.findIndex((x) => x.id === d.item.id);
       if (i >= 0) S.items[i] = d.item; else S.items.push(d.item);
-      if (S.detail && S.detail.item?.id === d.item.id) {
+      if (d.bid && S.detail && S.detail.item?.id === d.item.id) {
         // 상세 화면을 보고 있으면 서버에 다시 묻지 않고 새 입찰만 끼워 넣음
         S.detail.item = d.item;
         S.detail.bids = [d.bid, ...S.detail.bids].sort((a, b) => b.amount - a.amount || a.at - b.at);
@@ -59,6 +65,9 @@ async function boot() {
   window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
   setInterval(tick, 1000);
   render();
+}
+async function loadMy() {
+  try { const r = await api("/api/my"); S.myWishes = r.wishes || {}; r.bidItems.forEach((id) => S.myItems.add(id)); } catch (e) {}
 }
 function rememberMine(itemId) {
   S.myItems.add(itemId);
@@ -114,7 +123,7 @@ function renderLogin(app) {
     $("#lgo").disabled = true;
     try {
       const r = await api("/api/login", { method: "POST", body: JSON.stringify({ emp: e6, phone: p, agree: true }) });
-      S.me = { token: r.token, emp: r.emp, pid: r.pid, isAdmin: !!r.isAdmin }; saveMe(S.me);
+      S.me = { token: r.token, emp: r.emp, pid: r.pid, isAdmin: !!r.isAdmin }; saveMe(S.me); await loadMy();
       app.dataset.view = ""; render(); toast("환영합니다! 경매에 참여해 보세요.");
     } catch (err) { msg.textContent = err.message; $("#lgo").disabled = false; }
   });
@@ -123,6 +132,8 @@ function renderLogin(app) {
 /* ---------------- list ---------------- */
 function badge(it, s) {
   if (s.closed) return s.sold ? `<span class="badge b-done">낙찰완료</span>` : `<span class="badge b-none">유찰</span>`;
+  if (s.pre) return wishOpen() ? `<span class="badge b-wish">희망가 접수중</span>` : `<span class="badge b-none">경매 전</span>`;
+  if (it.extended) return `<span class="badge b-soon">🔥 연장전</span>`;
   if (s.left < 3600e3) return `<span class="badge b-soon">마감임박</span>`;
   return `<span class="badge b-live">진행중</span>`;
 }
@@ -130,20 +141,21 @@ function renderList(app) {
   if (app.dataset.view !== "list") {
     app.dataset.view = "list";
     app.innerHTML = `<div class="wrap"><section class="hero"><h1>마음을 나누는 연말 경매</h1><p>임직원이 기부한 물품을 경매로 나눕니다. 수익금은 전액 기부됩니다.</p>
-      <div class="stats" id="stats"></div><div class="filters" id="filters"></div></section><div class="grid" id="grid"></div></div>`;
+      <div id="sched"></div><div class="stats" id="stats"></div><div class="filters" id="filters"></div></section><div class="grid" id="grid"></div></div>`;
   }
   const rows = S.items.map((it) => [it, st(it)]);
-  const live = rows.filter(([, s]) => !s.closed).length;
+  $("#sched").innerHTML = schedBanner();
+  const live = rows.filter(([, s]) => !s.closed && !s.pre).length;
   const total = rows.reduce((a, [it]) => a + (it.top ? it.top.amount : 0), 0);
   const bids = rows.reduce((a, [it]) => a + it.bidCount, 0);
   const myTop = rows.filter(([, s]) => s.mineTop).length;
-  $("#stats").innerHTML = `<div class="stat"><b>${S.items.length}</b><span>전체 물품</span></div><div class="stat"><b>${live}</b><span>진행중</span></div><div class="stat"><b>${bids}</b><span>총 입찰</span></div><div class="stat"><b>${total.toLocaleString("ko-KR")}</b><span>현재 모금액(원)</span></div>${myTop ? `<div class="stat hl"><b>${myTop}</b><span>내가 최고가인 물품</span></div>` : ""}`;
-  const F = [["all", "전체"], ["live", "진행중"], ["mine", "내 입찰"], ["done", "종료"]];
+  $("#stats").innerHTML = `<div class="stat"><b>${S.items.length}</b><span>전체 물품</span></div>${started() ? `<div class="stat"><b>${live}</b><span>진행중</span></div>` : `<div class="stat"><b>${rows.filter(([, s]) => s.myWish).length}</b><span>내가 희망가 남긴 물품</span></div>`}<div class="stat"><b>${bids}</b><span>총 입찰</span></div><div class="stat"><b>${total.toLocaleString("ko-KR")}</b><span>현재 모금액(원)</span></div>${myTop ? `<div class="stat hl"><b>${myTop}</b><span>내가 최고가인 물품</span></div>` : ""}`;
+  const F = started() ? [["all", "전체"], ["live", "진행중"], ["mine", "내 입찰"], ["done", "종료"]] : [["all", "전체"], ["mine", "내 희망가"]];
   $("#filters").innerHTML = F.map(([k, l]) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${l}</button>`).join("");
   $$("#filters button").forEach((b) => (b.onclick = () => { S.filter = b.dataset.f; renderList(app); }));
   const grid = $("#grid");
   if (!S.loaded) { grid.innerHTML = `<div class="center" style="grid-column:1/-1">불러오는 중…</div>`; grid.dataset.sig = ""; return; }
-  const shown = rows.filter(([, s]) => S.filter === "all" || (S.filter === "live" && !s.closed) || (S.filter === "done" && s.closed) || (S.filter === "mine" && (s.mineIn || s.mineTop)));
+  const shown = rows.filter(([, s]) => S.filter === "all" || (S.filter === "live" && !s.closed && !s.pre) || (S.filter === "done" && s.closed) || (S.filter === "mine" && (s.mineIn || s.mineTop || (s.pre && s.myWish))));
   if (!S.items.length || !shown.length) {
     grid.dataset.sig = "";
     grid.innerHTML = `<div class="center" style="grid-column:1/-1">${S.items.length ? "해당하는 물품이 없습니다." : "아직 등록된 물품이 없습니다."}</div>`;
@@ -168,17 +180,26 @@ function renderList(app) {
     stamp.firstElementChild.textContent = s.sold ? "낙찰완료" : "유찰";
     $(".plabel", c).textContent = s.closed ? (s.sold ? "낙찰가" : "시작가") : it.top ? "현재 최고가" : "시작가";
     const pe = $(".price", c), p = it.top ? it.top.amount : it.start;
-    pe.textContent = won(p); flashIfChanged(pe, "l:" + it.id, p);
-    $(".cnt", c).textContent = `입찰 ${it.bidCount}건`;
+    pe.textContent = s.pre && !it.top && !it.start ? "추후 공개" : won(p); flashIfChanged(pe, "l:" + it.id, p);
+    $(".cnt", c).textContent = s.pre ? `관심 ${it.wishCount}명` : `입찰 ${it.bidCount}건`;
     const cd = $(".cd", c); cd.dataset.end = it.endAt; updateCd(cd);
-    $(".tagslot", c).innerHTML = s.mineTop ? `<span class="mine">${s.closed ? "🎉 내가 낙찰" : "내가 최고가"}</span>` : s.mineIn && !s.closed ? `<span class="mine out">더 높은 입찰 발생</span>` : "";
+    $(".tagslot", c).innerHTML = s.pre ? (s.myWish ? `<span class="mine">내 희망가 ${won(s.myWish)}</span>` : "") : s.mineTop ? `<span class="mine">${s.closed ? "🎉 내가 낙찰" : "내가 최고가"}</span>` : s.mineIn && !s.closed ? `<span class="mine out">더 높은 입찰 발생</span>` : "";
   }
 }
 function flashIfChanged(el, key, v) {
   if (S.prevPrice[key] != null && S.prevPrice[key] !== v) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
   S.prevPrice[key] = v;
 }
+function schedBanner() {
+  const sc = S.schedule;
+  if (!sc.startAt) return "";
+  if (started()) return "";
+  return `<div class="sched"><div><b>${wishOpen() ? "🎁 지금은 희망가 접수 기간이에요" : "⏳ 희망가 접수가 끝났어요"}</b><span>${wishOpen() ? `갖고 싶은 물품에 희망가를 남겨 주세요. 금액은 다른 사람에게 공개되지 않아요.${sc.wishEndAt ? ` · 접수 마감 ${fmtDTfull(sc.wishEndAt)}` : ""}` : "경매가 시작되면 바로 입찰할 수 있어요."}</span></div>
+    <div class="sched-r"><span>경매 시작</span><b>${fmtDTfull(sc.startAt)}</b><span class="cd" data-start="${sc.startAt}"></span></div></div>`;
+}
 function updateCd(el) {
+  if (el.dataset.start) { const l = Number(el.dataset.start) - now(); el.textContent = l > 0 ? countdown(l) + " 남음" : "시작!"; return; }
+  if (!started() && el.dataset.end) { el.textContent = S.schedule.startAt ? `${fmtDT(S.schedule.startAt)} 시작` : ""; el.classList.remove("urgent"); return; }
   const left = Number(el.dataset.end) - now();
   if (left <= 0) { el.textContent = "경매 종료"; el.classList.remove("urgent"); return; }
   el.textContent = countdown(left) + " 남음"; el.classList.toggle("urgent", left < 3600e3);
@@ -221,7 +242,8 @@ function renderItem(app, id) {
         <div class="panel" style="margin-top:12px" id="bidPanel">
           <div class="plabel" id="dplabel"></div>
           <div class="dprice price" id="dprice"></div>
-          <dl class="kv"><dt>시작가</dt><dd id="dstart"></dd><dt>입찰 단위</dt><dd id="dstep"></dd><dt>마감</dt><dd id="dend"></dd><dt>남은 시간</dt><dd><span class="cd" id="dcd"></span></dd></dl>
+          <dl class="kv"><dt id="dstartRow">경매 시작</dt><dd id="dstartRow2"><b id="dstartAt"></b></dd><dt>시작가</dt><dd id="dstart"></dd><dt>마감</dt><dd id="dend"></dd><dt id="cdLabel">남은 시간</dt><dd><span class="cd" id="dcd"></span></dd></dl>
+          <div class="note red hidden" id="extNote" style="margin:0 0 10px">🔥 <b>연장전!</b> 마감 직전 입찰이 들어와 시간이 늘어났어요. ${S.schedule.extendSeconds || 30}초 동안 새 입찰이 없으면 끝나요.</div>
           <div id="bidArea"></div>
         </div>
         <div class="hist"><h3>입찰 현황 <span id="hcount" style="color:var(--muted);font-weight:400"></span></h3><ol id="hist"></ol></div>
@@ -234,7 +256,7 @@ function renderItem(app, id) {
     </div></div>
     <div class="mbar" id="mbar"><div><div class="plabel" id="mlabel"></div><div class="mprice" id="mprice"></div></div><div class="spacer"></div><span class="cd" id="mcd"></span><button class="btn" id="mgo">입찰하기</button></div>`;
     $("#back").onclick = () => (location.hash = "");
-    $("#mgo").onclick = () => { $("#bidPanel").scrollIntoView({ behavior: "smooth", block: "center" }); setTimeout(() => $("#amt")?.focus({ preventScroll: true }), 400); };
+    $("#mgo").onclick = () => { $("#bidPanel").scrollIntoView({ behavior: "smooth", block: "center" }); setTimeout(() => ($("#amt") || $("#wamt"))?.focus({ preventScroll: true }), 400); };
     if (window.IntersectionObserver) {
       S.panelVisible = false;
       new IntersectionObserver((es) => { S.panelVisible = es[0].isIntersecting; updateMbar(); }).observe($("#bidPanel"));
@@ -248,17 +270,28 @@ function renderItem(app, id) {
   $(".dimg .bslot").innerHTML = badge(it, s);
   $("#dplabel").textContent = s.closed ? (s.sold ? "낙찰가" : "유찰") : it.top ? "현재 최고가" : "시작가";
   const p = it.top ? it.top.amount : it.start;
-  $("#dprice").textContent = won(p); flashIfChanged($("#dprice"), "d:" + it.id, p);
-  $("#dstart").textContent = won(it.start); $("#dstep").textContent = won(it.step); $("#dend").textContent = fmtDTfull(it.endAt);
+  $("#dprice").textContent = s.pre && !it.top && !it.start ? "추후 공개" : won(p); flashIfChanged($("#dprice"), "d:" + it.id, p);
+  $("#dstart").textContent = s.pre && !it.start ? "추후 공개" : won(it.start); 
+  $("#dend").innerHTML = it.extended ? `<s style="color:var(--muted)">${esc(fmtDTfull(it.baseEndAt))}</s> → <b style="color:var(--red)">${esc(fmtDTs(it.endAt))} 🔥연장</b>` : esc(fmtDTfull(it.endAt));
+  $("#dstartRow").classList.toggle("hidden", !s.pre); $("#dstartRow2").classList.toggle("hidden", !s.pre);
+  if (s.pre) $("#dstartAt").textContent = fmtDTfull(S.schedule.startAt);
   const cd = $("#dcd"); cd.dataset.end = it.endAt; updateCd(cd);
+  $("#cdLabel").textContent = s.pre ? "시작까지" : "남은 시간";
+  if (s.pre) { cd.dataset.start = S.schedule.startAt; updateCd(cd); } else delete cd.dataset.start;
+  $("#extNote").classList.toggle("hidden", !(it.extended && !s.closed));
 
   const bids = S.detail && S.detail.item?.id === id ? S.detail.bids : null;
-  $("#hcount").textContent = bids ? `${bids.length}건` : "";
+  $(".hist h3").firstChild.textContent = s.pre ? "관심 현황 " : "입찰 현황 ";
+  $("#hcount").textContent = s.pre ? "" : bids ? `${bids.length}건` : "";
+  if (s.pre && !(bids && bids.length)) {
+    $("#hist").innerHTML = `<li class="empty">${it.wishCount ? `<b>${it.wishCount}명</b>이 이 물품에 희망가를 남겼어요 👀` : "아직 희망가를 남긴 사람이 없어요."}</li>`;
+  } else
   $("#hist").innerHTML = !bids ? `<li class="empty">불러오는 중…</li>` : bids.length
     ? bids.map((b, i) => `<li class="${i === 0 ? "top" : ""}"><span>${i === 0 ? (s.closed ? "🏆 " : "👑 ") : ""}${S.me && b.pid === S.me.pid ? `<b>나</b> (${esc(b.emp)})` : esc(b.emp)}</span><span>${won(b.amount)}</span><span style="color:var(--muted)">${fmtDT(b.at)}</span></li>`).join("")
     : `<li class="empty">첫 입찰자가 되어 보세요!</li>`;
 
   const area = $("#bidArea");
+  if (s.pre) { renderWish(area, it, s); return; }
   if (s.closed) {
     const mode = "closed:" + (it.top ? it.top.pid : "") + ":" + s.mineTop;
     if (area.dataset.mode !== mode) {
@@ -271,28 +304,32 @@ function renderItem(app, id) {
     }
     return;
   }
-  if (area.dataset.mode !== "open") {
-    area.dataset.mode = "open"; area.dataset.min = "";
-    area.innerHTML = `<div id="mystate"></div><div class="bidbox"><input id="amt" inputmode="numeric" autocomplete="off" aria-label="입찰 금액"><button class="btn" id="bidbtn">입찰하기</button></div>
-      <div class="quick" id="quick"></div><div class="msg" id="bmsg"></div>`;
-    const amt = $("#amt");
-    amt.addEventListener("input", () => { const d = digits(amt.value); amt.value = d ? Number(d).toLocaleString("ko-KR") : ""; });
-    amt.addEventListener("keydown", (e) => { if (e.key === "Enter") $("#bidbtn").click(); });
-    $("#bidbtn").onclick = () => doBid(id);
+  const RAISES = it.raises && it.raises.length ? it.raises : [1000, 3000, 5000, 10000];
+  const rsig = "open:" + RAISES.join(",");
+  if (area.dataset.mode !== rsig) {
+    area.dataset.mode = rsig;
+    area.innerHTML = `<div id="mystate"></div>
+      <div class="tapnote">버튼을 누르면 <b>바로 입찰</b>돼요 (취소 불가)</div>
+      <button class="btn tapfirst hidden" id="tapStart"></button>
+      <div class="taps" id="taps">${RAISES.map((r) => `<button class="tap" data-r="${r}"><b>${raiseLabel(r)}</b></button>`).join("")}</div>
+      <div class="msg" id="bmsg"></div>`;
+    $$("#taps .tap").forEach((b) => (b.onclick = () => doBid(id, Number(b.dataset.amt))));
+    $("#tapStart").onclick = () => doBid(id, Number($("#tapStart").dataset.amt));
   }
-  const amt = $("#amt");
-  const cur = Number(digits(amt.value)) || 0;
-  if (Number(area.dataset.min) !== it.minNext) { if (cur < it.minNext) amt.value = it.minNext.toLocaleString("ko-KR"); area.dataset.min = it.minNext; }
-  amt.placeholder = `${it.minNext.toLocaleString("ko-KR")}원 이상`;
-  const q = $("#quick"), qsig = it.minNext + ":" + it.step;
-  if (q.dataset.sig !== qsig) {
-    q.dataset.sig = qsig;
-    q.innerHTML = [0, 1, 4, 9].map((n) => `<button data-v="${it.minNext + it.step * n}">${n === 0 ? "최소 입찰가" : "+" + (it.step * n).toLocaleString("ko-KR")}</button>`).join("") + `<span style="font-size:12px;color:var(--muted)">최소 ${won(it.minNext)}</span>`;
-    $$("button", q).forEach((b) => (b.onclick = () => (amt.value = Number(b.dataset.v).toLocaleString("ko-KR"))));
-  }
-  $("#mystate").innerHTML = s.mineTop ? `<div class="note" style="margin-top:0">현재 회원님이 최고가 입찰자입니다.</div>`
-    : s.mineIn ? `<div class="note red" style="margin-top:0">다른 분이 더 높은 금액으로 입찰했습니다.</div>` : "";
-  $("#bidbtn").disabled = S.busy || s.mineTop;
+  const base = it.top ? it.top.amount : it.start;
+  const fs = $("#tapStart");
+  fs.classList.toggle("hidden", !!it.top);
+  if (!it.top) { fs.dataset.amt = it.minNext; fs.textContent = `시작가 ${won(it.minNext)}에 첫 입찰`; }
+  $$("#taps .tap").forEach((b) => {
+    const r = Number(b.dataset.r), amt = base + r;
+    const ok = amt >= it.minNext;
+    b.dataset.amt = amt;
+    b.disabled = S.busy || s.mineTop || !ok;
+  });
+  fs.disabled = S.busy || s.mineTop;
+  if (!s.mineTop && $("#bmsg").classList.contains("ok")) { $("#bmsg").className = "msg"; $("#bmsg").textContent = ""; }
+  $("#mystate").innerHTML = s.mineTop ? `<div class="note" style="margin-top:0">현재 회원님이 최고가 입찰자입니다. 다른 분이 올리면 다시 입찰할 수 있어요.</div>`
+    : s.mineIn ? `<div class="note red" style="margin-top:0">다른 분이 더 높은 금액으로 입찰했습니다!</div>` : "";
 }
 
 function renderPhotos(it) {
@@ -314,28 +351,61 @@ function updateMbar() {
   $("#mprice").textContent = won(it.top ? it.top.amount : it.start);
   const cd = $("#mcd"); cd.dataset.end = it.endAt; updateCd(cd);
   const b = $("#mgo");
-  b.textContent = s.closed ? (s.mineTop ? "🎉 낙찰" : "경매 종료") : s.mineTop ? "내가 최고가" : "입찰하기";
-  b.disabled = s.closed;
+  b.textContent = s.pre ? (wishOpen() ? (s.myWish ? "희망가 수정" : "희망가 남기기") : "경매 전") : s.closed ? (s.mineTop ? "🎉 낙찰" : "경매 종료") : s.mineTop ? "내가 최고가" : "입찰하기";
+  b.disabled = s.closed || (s.pre && !wishOpen());
+  if (s.pre) { $("#mlabel").textContent = "경매 시작"; $("#mprice").textContent = fmtDT(S.schedule.startAt); $("#mcd").dataset.start = S.schedule.startAt; } else delete $("#mcd").dataset.start;
 }
 
-async function doBid(id) {
-  const it = S.items.find((x) => x.id === id); if (!it || S.busy) return;
-  const msg = $("#bmsg"); msg.className = "msg";
-  const amount = Number(digits($("#amt").value));
-  if (!amount || amount < it.minNext) { msg.className = "msg err"; msg.textContent = `${won(it.minNext)} 이상 입찰해 주세요.`; return; }
-  const base = it.top ? it.top.amount : it.start || 1;
-  if (amount >= base * 5 && amount - base >= 100000) {
-    if (!(await modal({ title: "금액을 다시 확인해 주세요", body: `입력하신 금액은 ${won(amount)}입니다.\n현재가(${won(base)})보다 많이 높습니다.`, ok: "이 금액이 맞아요" }))) return;
+function raiseLabel(v) {
+  v = Number(v);
+  if (v >= 10000 && v % 1000 === 0) return `+${(v / 10000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}만원`;
+  if (v >= 1000 && v % 100 === 0) return `+${(v / 1000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}천원`;
+  return `+${v.toLocaleString("ko-KR")}원`;
+}
+function renderWish(area, it, s) {
+  const open = wishOpen();
+  const mode = "wish:" + open + ":" + (s.myWish || "");
+  if (area.dataset.mode === mode) return;
+  area.dataset.mode = mode;
+  if (!open) {
+    area.innerHTML = `<div class="closedbox none"><b>⏳ 희망가 접수가 끝났어요</b><div style="font-size:13px;margin-top:4px;opacity:.9">${esc(fmtDTfull(S.schedule.startAt))}에 경매가 시작되면 입찰할 수 있어요.${s.myWish ? `<br>내가 남긴 희망가: ${won(s.myWish)}` : ""}</div></div>`;
+    return;
   }
-  if (!(await modal({ title: "입찰 확인", body: `No.${it.no} ${it.name}\n\n${won(amount)}에 입찰합니다.\n입찰 후에는 취소할 수 없습니다.`, ok: "입찰하기" }))) return;
-  S.busy = true; $("#bidbtn").disabled = true;
+  area.innerHTML = `<div class="wishbox">
+    <b>🎁 희망가 남기기</b>
+    <p>이 물품, 얼마면 사고 싶으세요? 남긴 금액은 <b>다른 사람에게 공개되지 않고</b> 경매 시작가를 정하는 데 참고만 해요. 구매 약속이 아니니 부담 없이 남겨 주세요.</p>
+    ${s.myWish ? `<div class="mywish">내 희망가 <b>${won(s.myWish)}</b></div>` : ""}
+    <div class="bidbox"><input id="wamt" inputmode="numeric" autocomplete="off" placeholder="예) 30,000" aria-label="희망가" value="${s.myWish ? Number(s.myWish).toLocaleString("ko-KR") : ""}"><button class="btn" id="wbtn">${s.myWish ? "수정하기" : "남기기"}</button></div>
+    ${s.myWish ? `<button class="btn ghost sm" id="wdel" style="margin-top:8px">희망가 취소</button>` : ""}
+    <div class="msg" id="wmsg"></div></div>`;
+  const w = $("#wamt");
+  w.addEventListener("input", () => { const d = digits(w.value); w.value = d ? Number(d).toLocaleString("ko-KR") : ""; });
+  w.addEventListener("keydown", (e) => { if (e.key === "Enter") $("#wbtn").click(); });
+  const send = async (amount) => {
+    const m = $("#wmsg");
+    try {
+      await api("/api/wish", { method: "POST", body: JSON.stringify({ itemId: it.id, amount }) });
+      if (amount) S.myWishes[it.id] = amount; else delete S.myWishes[it.id];
+      toast(amount ? `희망가 ${won(amount)}을 남겼어요` : "희망가를 취소했어요"); area.dataset.mode = ""; render();
+    } catch (e) { m.className = "msg err"; m.textContent = e.message; }
+  };
+  $("#wbtn").onclick = () => { const a = Number(digits(w.value)); if (!a) { $("#wmsg").className = "msg err"; $("#wmsg").textContent = "금액을 입력해 주세요."; return; } send(a); };
+  if ($("#wdel")) $("#wdel").onclick = () => send(null);
+}
+
+async function doBid(id, amount) {
+  const it = S.items.find((x) => x.id === id); if (!it || S.busy || !amount) return;
+  const msg = $("#bmsg"); msg.className = "msg";
+  S.busy = true; render();
   try {
     await api("/api/bid", { method: "POST", body: JSON.stringify({ itemId: id, amount }) });
     rememberMine(id);
-    msg.className = "msg ok"; msg.textContent = `${won(amount)} 입찰 완료!`; toast("입찰되었습니다");
+    msg.className = "msg ok"; msg.textContent = `${won(amount)} 입찰 완료!`; toast(`${won(amount)} 입찰!`);
+    if (navigator.vibrate) try { navigator.vibrate(40); } catch (e) {}
   } catch (e) {
-    msg.className = "msg err"; msg.textContent = e.message;
-    if (e.data?.minNext) $("#amt").value = Number(e.data.minNext).toLocaleString("ko-KR");
+    msg.className = "msg err";
+    // 그 사이 다른 사람이 먼저 올린 경우: 보던 가격보다 높게 자동으로 넣지 않고 다시 누르게 함
+    msg.textContent = e.data?.code === "low" ? `그 사이 다른 입찰이 먼저 들어왔어요. 현재가를 확인하고 다시 눌러 주세요.` : e.message;
   } finally {
     S.busy = false; render();
   }
@@ -344,8 +414,8 @@ async function doBid(id) {
 /* ---------------- tick ---------------- */
 let flipSig = "";
 function tick() {
-  $$(".cd[data-end]").forEach(updateCd);
-  const sig = S.items.map((it) => { const l = it.endAt - now(); return l <= 0 ? "c" : l < 3600e3 ? "h" : "o"; }).join("");
+  $$(".cd[data-end],.cd[data-start]").forEach(updateCd);
+  const sig = (started() ? "S" : "P") + (wishOpen() ? "W" : "") + S.items.map((it) => { const l = it.endAt - now(); return l <= 0 ? "c" : l < 3600e3 ? "h" : "o"; }).join("");
   if (sig !== flipSig) { flipSig = sig; render(); }
 }
 
