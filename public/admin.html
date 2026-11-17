@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>경매 관리자</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Noto+Serif+KR:wght@700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/admin.html"><span class="dot"></span>경매 관리자</a>
+    <span class="live off" id="live"><i></i><span>연결 중</span></span>
+    <div class="spacer"></div>
+    <div class="who"><a class="hbtn" href="/" target="_blank" rel="noopener">경매장 열기</a><button class="hbtn hidden" id="alogout">나가기</button></div>
+  </div>
+</header>
+<main id="app"><div class="center">불러오는 중…</div></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "year-end-auction",
+  "main": "src/index.js",
+  "compatibility_date": "2025-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "AUCTION", "class_name": "Auction" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Auction"] }],
+  "observability": { "enabled": true },
+  "vars": {
+    // 화면과 문자에 표시되는 행사 이름
+    "EVENT_NAME": "연말 나눔 경매",
+    // "dry-run" = 문자를 실제로 보내지 않고 관리자 화면에 미리보기로만 기록
+    // "live"    = 솔라피로 실제 발송 (README 참고)
+    "SMS_MODE": "dry-run",
+    // 마감 N초 전 입찰 시 마감을 N초 뒤로 연장 (0 = 사용 안 함, 예: "60")
+    "ANTI_SNIPE_SECONDS": "0"
+  }
+  // 비밀값(secret)은 여기에 적지 말고 `npx wrangler secret put 이름` 으로 등록하세요:
+  //   ADMIN_USERS         관리자 명단 "사번:휴대폰,사번:휴대폰" (필수, README 참고)
+  //   SOLAPI_API_KEY      솔라피 API Key      (실제 발송 시)
+  //   SOLAPI_API_SECRET   솔라피 API Secret   (실제 발송 시)
+  //   SMS_FROM            솔라피에 등록한 발신번호 (실제 발송 시)
+}
