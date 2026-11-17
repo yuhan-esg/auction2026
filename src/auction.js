@@ -476,7 +476,24 @@ export class Auction extends DurableObject {
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const dt = (ms) => (ms ? new Date(ms + 9 * 3600e3).toISOString().replace("T", " ").slice(0, 16) : "");
     let rows;
-    if (type === "bids") {
+    if (type === "participants") {
+      rows = [["사번", "휴대폰", "최초 접속(KST)", "마지막 접속(KST)", "입찰 수", "낙찰 물품 수", "관리자"]];
+      const bidCnt = Object.fromEntries(this.all(`SELECT emp, COUNT(*) AS c FROM bids GROUP BY emp`).map((r) => [r.emp, r.c]));
+      const winCnt = {};
+      for (const it of this.items()) {
+        if (Date.now() < it.end_at) continue;
+        const top = this.topBid(it.id, it.end_at);
+        if (top) winCnt[top.emp] = (winCnt[top.emp] || 0) + 1;
+      }
+      const people = new Map();
+      for (const r of this.all(`SELECT emp, phone, created_at, is_admin FROM sessions ORDER BY created_at ASC`)) {
+        const p = people.get(r.emp) || { first: r.created_at };
+        p.last = r.created_at; p.phone = r.phone || p.phone; p.admin = p.admin || r.is_admin === 1;
+        people.set(r.emp, p);
+      }
+      for (const [emp, p] of [...people].sort((a, b) => a[0].localeCompare(b[0])))
+        rows.push([emp, fmtPhone(p.phone), dt(p.first), dt(p.last), bidCnt[emp] || 0, winCnt[emp] || 0, this.isAdminPair(emp, p.phone || "") ? "O" : ""]);
+    } else if (type === "bids") {
       rows = [["번호", "물품명", "사번", "연락처", "입찰가", "입찰시각(KST)"]];
       for (const r of this.all(`SELECT i.no,i.name,b.emp,b.phone,b.amount,b.at FROM bids b JOIN items i ON i.id=b.item_id ORDER BY i.no, b.amount DESC`))
         rows.push([r.no, r.name, r.emp, fmtPhone(r.phone), r.amount, dt(r.at)]);
