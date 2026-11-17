@@ -114,7 +114,13 @@ export class Auction extends DurableObject {
 
   /* ---------------- realtime ---------------- */
   broadcast(extra = {}) {
-    const msg = JSON.stringify({ type: "state", ...this.state(), ...extra });
+    this.sendAll(JSON.stringify({ type: "state", ...this.state(), ...extra }));
+  }
+  // 입찰 한 건은 바뀐 물품 하나와 새 입찰만 보냄 (전체 목록보다 훨씬 작음)
+  broadcastBid(itemRow, bid) {
+    this.sendAll(JSON.stringify({ type: "item", now: Date.now(), item: this.summary(itemRow), bid }));
+  }
+  sendAll(msg) {
     for (const ws of this.ctx.getWebSockets()) {
       try { ws.send(msg); } catch (e) { /* closed */ }
     }
@@ -263,7 +269,8 @@ export class Auction extends DurableObject {
       extended = true;
     }
     if (extended) await this.scheduleAlarm();
-    this.broadcast({ change: { type: "bid", itemId: it.id, amount, emp: maskEmp(s.emp), pid: s.pid, extended } });
+    if (extended) this.broadcast({ change: { type: "extended", itemId: it.id } });
+    else this.broadcastBid(it, { emp: maskEmp(s.emp), pid: s.pid, amount, at: now });
     return json({ ok: true, amount, extended });
   }
 

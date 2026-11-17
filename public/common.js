@@ -45,12 +45,12 @@ export const GIFT_PH = `<div class="ph"><svg viewBox="0 0 48 48" fill="none" str
 export const imgUrl = (it) => (it.imgVer > 0 ? `/api/img/${encodeURIComponent(it.id)}?v=${it.imgVer}` : "");
 
 // 실시간 연결 (WebSocket, 끊기면 자동 재연결 + 20초마다 보조 새로고침)
-export function connectLive({ onState, onStatus }) {
+export function connectLive({ onState, onItem, onStatus }) {
   let ws, retry = 0, pingT, alive = false;
   const open = () => {
     ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/ws`);
     ws.onopen = () => { retry = 0; alive = true; onStatus(true); clearInterval(pingT); pingT = setInterval(() => { try { ws.send("ping"); } catch (e) {} }, 25000); };
-    ws.onmessage = (e) => { if (e.data === "pong") return; try { const d = JSON.parse(e.data); if (d.type === "state") onState(d); } catch (er) {} };
+    ws.onmessage = (e) => { if (e.data === "pong") return; try { const d = JSON.parse(e.data); if (d.type === "state") onState(d); else if (d.type === "item") (onItem || onState)(d); } catch (er) {} };
     ws.onclose = () => { alive = false; onStatus(false); clearInterval(pingT); setTimeout(open, Math.min(15000, 1000 * 2 ** retry++)); };
     ws.onerror = () => { try { ws.close(); } catch (e) {} };
   };

@@ -39,7 +39,19 @@ async function boot() {
       S.offset = d.now - Date.now();
       S.items = d.items; S.loaded = true;
       if (d.eventName && d.eventName !== S.event) { S.event = d.eventName; $("#eventName").textContent = d.eventName; document.title = d.eventName; }
-      if (S.detailId && (!d.change || d.change.type !== "bid" || d.change.itemId === S.detailId)) loadDetail(S.detailId);
+      if (S.detailId) loadDetail(S.detailId);
+      render();
+    },
+    onItem: (d) => {
+      S.offset = d.now - Date.now();
+      const i = S.items.findIndex((x) => x.id === d.item.id);
+      if (i >= 0) S.items[i] = d.item; else S.items.push(d.item);
+      if (S.detail && S.detail.item?.id === d.item.id) {
+        // 상세 화면을 보고 있으면 서버에 다시 묻지 않고 새 입찰만 끼워 넣음
+        S.detail.item = d.item;
+        S.detail.bids = [d.bid, ...S.detail.bids].sort((a, b) => b.amount - a.amount || a.at - b.at);
+        if (S.me && d.bid.pid === S.me.pid) rememberMine(d.item.id);
+      }
       render();
     },
     onStatus: (ok) => { const el = $("#live"); el.classList.toggle("off", !ok); el.lastElementChild.textContent = ok ? "실시간" : "재연결 중"; },
