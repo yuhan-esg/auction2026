@@ -66,6 +66,7 @@ export class Auction extends DurableObject {
     this.run(`CREATE INDEX IF NOT EXISTS photos_item ON photos(item_id, ord)`);
     this.addColumn("items", "photo_ver", "INTEGER DEFAULT 0");
     this.addColumn("sessions", "is_admin", "INTEGER DEFAULT 0");
+    this.addColumn("items", "is_sample", "INTEGER DEFAULT 0");
     if (!this.getSetting("pid_salt")) this.setSetting("pid_salt", randHex(16));
   }
   addColumn(table, col, type) {
@@ -97,7 +98,7 @@ export class Auction extends DurableObject {
     const cnt = this.first(`SELECT COUNT(*) AS c FROM bids WHERE item_id=? AND at<=?`, it.id, it.end_at).c;
     const closed = now >= it.end_at;
     return {
-      id: it.id, no: it.no, name: it.name, description: it.description, donor: it.donor,
+      id: it.id, no: it.no, name: it.name, sample: !!it.is_sample, description: it.description, donor: it.donor,
       start: it.start_price, step: it.step, endAt: it.end_at, imgVer: it.img_ver || 0, photoVer: it.photo_ver || 0,
       bidCount: cnt,
       top: top ? { amount: top.amount, emp: maskEmp(top.emp), pid: top.pid, at: top.at } : null,
@@ -157,7 +158,7 @@ export class Auction extends DurableObject {
         it.id, "", text, smsBytes(text), smsMode(this.env), "failed", "연락처가 삭제되어 보낼 수 없습니다.", kind, Date.now());
       return;
     }
-    const r = await sendSms(this.env, { to, text });
+    const r = it.is_sample ? { mode: "sample", status: "preview", detail: "샘플 물품 — 실제로 발송하지 않았습니다." } : await sendSms(this.env, { to, text });
     this.run(`INSERT INTO sms_log(item_id,to_phone,text,bytes,mode,status,detail,kind,at) VALUES(?,?,?,?,?,?,?,?,?)`,
       it.id, to, text, smsBytes(text), r.mode, r.status, r.detail, kind, Date.now());
   }
@@ -402,6 +403,15 @@ export class Auction extends DurableObject {
         if (ph) { this.run(`DELETE FROM photos WHERE id=?`, int(mm[1])); this.bumpPhotos(ph.item_id); this.broadcast(); }
         return json({ ok: true });
       }
+      if (p === "/samples" && m === "POST") return this.seedSamples();
+      if (p === "/samples" && m === "DELETE") {
+        const ids = this.all(`SELECT id FROM items WHERE is_sample=1`).map((r) => r.id);
+        for (const id of ids) for (const t of ["bids", "images", "photos", "sms_log"]) this.run(`DELETE FROM ${t} WHERE item_id=?`, id);
+        this.run(`DELETE FROM items WHERE is_sample=1`);
+        this.run(`DELETE FROM sessions WHERE emp LIKE '9999%'`);
+        await this.afterItemChange();
+        return json({ ok: true, deleted: ids.length });
+      }
       if (p === "/bulk-end" && m === "POST") {
         const t = int((await body()).endAt);
         if (!(t > 0)) return err(400, "종료 시각을 확인해 주세요.");
@@ -433,9 +443,17 @@ export class Auction extends DurableObject {
       }
       if (p === "/sms-preview" && m === "POST") {
         const b = await body();
-        const text = renderTemplate(typeof b.template === "string" && b.template.trim() ? b.template : this.template(),
-          { event: this.eventName(), no: 1, name: "예시 물품", amount: 50000, emp: "123456" });
-        return json({ text, bytes: smsBytes(text), type: smsBytes(text) > 90 ? "LMS" : "SMS" });
+        const tpl = typeof b.template === "string" && b.template.trim() ? b.template : this.template();
+        let vars = { event: this.eventName(), no: 1, name: "예시 물품", amount: 50000, emp: "123456" }, to = null;
+        const it = b.itemId ? this.first(`SELECT * FROM items WHERE id=?`, String(b.itemId)) : null;
+        if (it) {
+          const top = this.topBid(it.id, it.end_at);
+          const closed = Date.now() >= it.end_at;
+          vars = { event: this.eventName(), no: it.no, name: it.name, amount: top ? top.amount : it.start_price, emp: top ? top.emp : "(낙찰자 사번)" };
+          to = { emp: top ? top.emp : "", phone: top ? fmtPhone(top.phone) : "", state: !top ? (closed ? "unsold" : "nobid") : closed ? "sold" : "leading" };
+        }
+        const text = renderTemplate(tpl, vars);
+        return json({ text, bytes: smsBytes(text), type: smsBytes(text) > 90 ? "LMS" : "SMS", to });
       }
       if ((mm = p.match(/^\/items\/([\w-]+)\/notify$/)) && m === "POST") {
         const it = this.first(`SELECT * FROM items WHERE id=?`, mm[1]);
@@ -465,6 +483,40 @@ export class Auction extends DurableObject {
       if (e instanceof Error && /확인|입력/.test(e.message)) return err(400, e.message);
       throw e;
     }
+  }
+
+  // 미리보기용 샘플 물품: 이미 끝난 3개(낙찰/유찰), 곧 끝나는 1개, 진행중 4개. 입찰자는 가상의 사번(9999xx)
+  async seedSamples() {
+    if (this.first(`SELECT 1 AS x FROM items WHERE is_sample=1 LIMIT 1`)) return err(409, "샘플 물품이 이미 있습니다. 먼저 ‘샘플만 삭제’를 눌러 주세요.");
+    const now = Date.now(), H = 3600e3, D = 24 * H;
+    const base = this.first(`SELECT COALESCE(MAX(no),0) AS n FROM items`).n;
+    const S = [
+      ["[샘플] 무선 블루투스 스피커", 20000, 1000, now - 2 * H, [20000, 23000, 26000], "거의 새 제품입니다.\n박스, 충전 케이블 포함."],
+      ["[샘플] 핸드드립 커피 세트", 15000, 1000, now - 1 * H, [15000, 17000], "드리퍼, 서버, 필터 100매 구성."],
+      ["[샘플] 캐시미어 머플러", 30000, 2000, now - 30 * 60e3, [], "미개봉 새 상품입니다."],
+      ["[샘플] 보드게임 세트", 10000, 1000, now + 3 * 60e3, [10000, 12000], "구성품 모두 있습니다. 3~6인용."],
+      ["[샘플] 노이즈캔슬링 이어폰", 50000, 5000, now + 2 * D, [50000, 60000, 70000, 75000], "6개월 사용, 정상 작동합니다."],
+      ["[샘플] 아로마 디퓨저", 10000, 1000, now + 2 * D, [], "리필 오일 2병 포함."],
+      ["[샘플] 캠핑 랜턴", 20000, 2000, now + 3 * D, [20000], "USB 충전식, 3단 밝기."],
+      ["[샘플] 와인 글라스 세트", 15000, 1000, now + 3 * D, [15000, 16000, 18000], "4개입, 선물 박스 포장."],
+    ];
+    const salt = this.getSetting("pid_salt");
+    const ids = [];
+    for (let i = 0; i < S.length; i++) {
+      const [name, start, step, endAt, amounts, desc] = S[i];
+      const id = "s" + Date.now().toString(36) + randHex(2) + i;
+      this.run(`INSERT INTO items(id,no,name,description,donor,start_price,step,end_at,created_at,is_sample) VALUES(?,?,?,?,?,?,?,?,?,1)`,
+        id, base + i + 1, name, desc, "샘플 기부자", start, step, endAt, now);
+      for (let k = 0; k < amounts.length; k++) {
+        const emp = String(999901 + ((i + k) % 5));
+        const pid = (await sha256Hex(salt + ":" + emp)).slice(0, 16);
+        const at = Math.min(endAt, now) - (amounts.length - k) * 7 * 60e3;
+        this.run(`INSERT INTO bids(item_id,emp,phone,pid,amount,at) VALUES(?,?,?,?,?,?)`, id, emp, "0100000" + emp.slice(2), pid, amounts[k], at);
+      }
+      ids.push({ id, no: base + i + 1, name });
+    }
+    await this.afterItemChange();
+    return json({ ok: true, items: ids });
   }
 
   async afterItemChange() {

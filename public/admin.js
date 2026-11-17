@@ -274,30 +274,64 @@ function renderResults() {
 function buildSms() {
   const ov = A.ov;
   A.tpl = ov.template;
+  const live = ov.smsMode === "live";
+  if (!A.pvItem || !ov.items.some((i) => i.id === A.pvItem)) A.pvItem = (ov.items.find((i) => i.status === "sold") || ov.items[0] || {}).id || "";
   $("#abody").innerHTML = `
-  <div class="detail" style="grid-template-columns:1.2fr 1fr;padding-bottom:0">
-    <div class="panel"><h3 style="margin:0 0 4px">낙찰 안내 문자 내용</h3>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 8px">아래 칸을 누르면 커서 위치에 넣을 수 있어요.</p>
-      <div class="row" id="vars">${["{행사명}", "{번호}", "{물품명}", "{낙찰가}", "{사번}"].map((v) => `<button class="chip" data-v="${v}">${v}</button>`).join("")}</div>
+  <div class="note" style="margin-top:0">
+    <b>문자는 이렇게 나가요</b><br>
+    · <b>받는 사람</b>: 물품마다 그 물품의 <b>낙찰자</b>에게 자동으로 보냅니다. 따로 고를 필요가 없어요.<br>
+    · <b>보내는 때</b>: 각 물품의 경매가 끝나는 순간 자동으로 보냅니다.${live ? "" : " (지금은 테스트 모드라 기록만 남아요)"}<br>
+    · <b>문구</b>: 아래 문구 <b>하나</b>를 모든 낙찰자가 같이 씁니다. <code>{물품명}</code> <code>{낙찰가}</code> 같은 칸은 보낼 때 물품마다 자동으로 채워져요.<br>
+    · <b>다시 보내기</b>: 오른쪽 미리보기에서 물품을 고르고 버튼을 누르거나, ‘낙찰 결과’ 탭에서 보낼 수 있어요.
+  </div>
+  <div class="detail" style="grid-template-columns:1.15fr 1fr;padding-bottom:0">
+    <div class="panel"><h3 style="margin:0 0 4px">낙찰 안내 문구 (모든 낙찰자 공통)</h3>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 8px">버튼을 누르면 커서 위치에 자동입력 칸이 들어갑니다. 실제 문자에서는 물품마다 값이 바뀌어요.</p>
+      <div class="row" id="vars">${[["{물품명}", "물품 이름"], ["{낙찰가}", "낙찰 금액"], ["{번호}", "물품 번호"], ["{사번}", "낙찰자 사번"], ["{행사명}", "행사 이름"]].map(([v, l]) => `<button class="chip" data-v="${v}" title="${l}">${v} <span style="color:var(--muted);font-size:11px">${l}</span></button>`).join("")}</div>
       <textarea class="t" id="tpl" rows="6" style="margin-top:10px">${esc(ov.template)}</textarea>
-      <div class="row" style="margin-top:10px"><button class="btn sm" id="tplSave">저장</button><button class="btn ghost sm" id="tplReset">기본 문구로</button><span class="msg" id="tplMsg"></span></div>
+      <div class="row" style="margin-top:10px"><button class="btn sm" id="tplSave">문구 저장</button><button class="btn ghost sm" id="tplReset">기본 문구로</button><span class="msg" id="tplMsg"></span></div>
     </div>
-    <div class="panel"><h3 style="margin:0 0 4px">미리보기</h3><div style="font-size:13px;color:var(--muted)" id="pvMeta"></div>
+    <div class="panel"><h3 style="margin:0 0 8px">미리보기</h3>
+      <label class="f" for="pvSel" style="margin-top:0">어떤 물품으로 볼까요?</label>
+      <select class="t" id="pvSel">${ov.items.length ? ov.items.map((i) => `<option value="${esc(i.id)}" ${i.id === A.pvItem ? "selected" : ""}>No.${esc(i.no)} ${esc(i.name)} · ${statusText(i)}</option>`).join("") : `<option value="">(등록된 물품 없음 — 예시 값으로 표시)</option>`}</select>
+      <div id="pvTo" style="font-size:13px;margin:10px 0 0"></div>
       <div class="phone-sms"><div class="from">${esc(ov.eventName)} · 발신번호 (솔라피에 등록한 번호)</div><div class="bubble" id="pv"></div></div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px" id="pvMeta"></div>
+      <div class="row" style="margin-top:12px"><button class="btn sm hidden" id="pvSend"></button></div>
     </div>
   </div>
-  <div class="panel" style="margin-top:16px"><h3 style="margin:0 0 10px">발송 기록 <span style="font-weight:400;color:var(--muted);font-size:13px">${ov.smsMode === "live" ? "실제 발송 모드" : "테스트 모드 — 실제로 발송되지 않음"}</span></h3>
+  <div class="panel" style="margin-top:16px"><h3 style="margin:0 0 10px">발송 기록 <span style="font-weight:400;color:var(--muted);font-size:13px">${live ? "실제 발송 모드" : "테스트 모드 — 실제로 발송되지 않음"}</span></h3>
     <div class="tscroll"><table class="t"><thead><tr><th>시각</th><th>물품</th><th>받는 번호</th><th>구분</th><th>상태</th><th>내용</th></tr></thead><tbody id="smsBody"></tbody></table></div></div>`;
-  const ta = $("#tpl");
+  const ta = $("#tpl"), sel = $("#pvSel");
+  const dirty = () => { const d = ta.value.trim() !== (A.ov.template || "").trim(); $("#tplMsg").className = "msg " + (d ? "err" : ""); $("#tplMsg").textContent = d ? "저장 안 됨 — ‘문구 저장’을 눌러야 실제 문자에 반영돼요" : ""; };
   let pvT;
   const preview = () => { clearTimeout(pvT); pvT = setTimeout(async () => {
-    try { const r = await api("/api/admin/sms-preview", { method: "POST", body: JSON.stringify({ template: ta.value }) });
-      $("#pv").textContent = r.text; $("#pvMeta").textContent = `${r.bytes}byte · ${r.type}${r.type === "LMS" ? " (90byte 초과 → 장문 요금)" : " (단문)"} · 예시 값으로 채운 모습`; } catch (e) {}
+    try {
+      const r = await api("/api/admin/sms-preview", { method: "POST", body: JSON.stringify({ template: ta.value, itemId: sel.value || null }) });
+      $("#pv").textContent = r.text;
+      $("#pvMeta").textContent = `${r.bytes}byte · ${r.type}${r.type === "LMS" ? " (90byte 초과 → 장문 요금)" : " (단문)"}${r.to ? "" : " · 예시 값으로 채운 모습"}`;
+      const t = r.to, btn = $("#pvSend");
+      $("#pvTo").innerHTML = !t ? "" :
+        t.state === "sold" ? `<b>받는 사람</b>: 낙찰자 <b>${esc(t.emp)}</b> · ${esc(t.phone || "(번호 삭제됨)")}` :
+        t.state === "leading" ? `<b>받는 사람</b>: 아직 진행중 — 지금 최고가 입찰자 <b>${esc(t.emp)}</b> · ${esc(t.phone)}<br><span style="color:var(--muted)">경매가 끝날 때 최고가인 사람에게 자동으로 보내요.</span>` :
+        t.state === "nobid" ? `<span style="color:var(--muted)">아직 입찰자가 없습니다. 경매가 끝날 때 낙찰자에게 자동으로 보내요. (금액은 시작가로 표시)</span>` :
+        `<span style="color:var(--muted)">유찰 — 보낼 사람이 없습니다.</span>`;
+      const it = A.ov.items.find((i) => i.id === sel.value);
+      btn.classList.toggle("hidden", !(t && t.state === "sold"));
+      btn.textContent = live ? "이 낙찰자에게 지금 보내기" : "이 낙찰자에게 보내기 (테스트: 기록만)";
+      btn.onclick = async () => {
+        if (ta.value.trim() !== (A.ov.template || "").trim()) return toast("먼저 ‘문구 저장’을 눌러 주세요");
+        if (!(await modal({ title: live ? "문자 보내기" : "테스트 발송 기록", body: `No.${it.no} ${it.name}\n받는 사람: ${t.emp} (${t.phone})${live ? "\n\n실제로 문자가 발송됩니다." : "\n\n테스트 모드라 실제로 보내지 않고 발송 기록에만 남깁니다."}`, ok: live ? "보내기" : "기록 남기기" }))) return;
+        try { await api(`/api/admin/items/${it.id}/notify`, { method: "POST" }); await load(); refreshSmsLog(); toast(live ? "발송 요청했습니다" : "발송 기록에 추가했습니다"); } catch (e) { toast(e.message); }
+      };
+    } catch (e) {}
   }, 200); };
-  ta.addEventListener("input", preview); preview();
-  $$("#vars [data-v]").forEach((b) => (b.onclick = () => { const s = ta.selectionStart ?? ta.value.length; ta.value = ta.value.slice(0, s) + b.dataset.v + ta.value.slice(ta.selectionEnd ?? s); ta.focus(); ta.selectionStart = ta.selectionEnd = s + b.dataset.v.length; preview(); }));
-  $("#tplSave").onclick = async () => { try { const r = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ template: ta.value }) }); A.ov.template = r.template; $("#tplMsg").className = "msg ok"; $("#tplMsg").textContent = "저장되었습니다"; } catch (e) { $("#tplMsg").className = "msg err"; $("#tplMsg").textContent = e.message; } };
-  $("#tplReset").onclick = () => { ta.value = ov.defaultTemplate; preview(); };
+  ta.addEventListener("input", () => { preview(); dirty(); });
+  sel.addEventListener("change", () => { A.pvItem = sel.value; preview(); });
+  preview();
+  $$("#vars [data-v]").forEach((b) => (b.onclick = () => { const s = ta.selectionStart ?? ta.value.length; ta.value = ta.value.slice(0, s) + b.dataset.v + ta.value.slice(ta.selectionEnd ?? s); ta.focus(); ta.selectionStart = ta.selectionEnd = s + b.dataset.v.length; preview(); dirty(); }));
+  $("#tplSave").onclick = async () => { try { const r = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ template: ta.value }) }); A.ov.template = r.template; ta.value = r.template; $("#tplMsg").className = "msg ok"; $("#tplMsg").textContent = "저장되었습니다. 앞으로 나가는 문자에 이 문구가 쓰입니다."; } catch (e) { $("#tplMsg").className = "msg err"; $("#tplMsg").textContent = e.message; } };
+  $("#tplReset").onclick = () => { ta.value = ov.defaultTemplate; preview(); dirty(); };
 }
 function refreshSmsLog() {
   const tb = $("#smsBody"); if (!tb) return;
@@ -311,13 +345,39 @@ function refreshSmsLog() {
 
 /* ---------------- data ---------------- */
 function buildData() {
+  const hasSample = A.ov.items.some((i) => i.sample);
   $("#abody").innerHTML = `
-  <div class="panel"><h3 style="margin:0 0 6px">개인정보 삭제</h3>
+  <div class="panel"><h3 style="margin:0 0 6px">샘플 물품 (미리보기용)</h3>
+    <p style="font-size:14px;color:#3a433d;margin:0 0 12px">화면이 어떻게 보이는지 확인할 수 있게 <b>[샘플]</b> 물품 8개를 넣습니다. 사진, 가상 입찰자(사번 9999xx), 이미 끝난 물품(낙찰완료·유찰), 3분 뒤 끝나는 물품이 함께 들어가요. 샘플 물품은 실제 발송 모드에서도 <b>문자가 나가지 않습니다</b>.</p>
+    <div class="row"><button class="btn sm" id="seed" ${hasSample ? "disabled" : ""}>샘플 물품 넣기</button><button class="btn ghost sm" id="unseed" ${hasSample ? "" : "disabled"}>샘플만 삭제</button><span class="msg" id="seedMsg"></span></div></div>
+  <div class="panel" style="margin-top:16px"><h3 style="margin:0 0 6px">개인정보 삭제</h3>
     <p style="font-size:14px;color:#3a433d;margin:0 0 12px">낙찰 안내가 끝나면 수집한 휴대폰 번호를 모두 지워 주세요. 사번과 입찰 기록, 낙찰 결과는 남고 <b>번호만</b> 지워집니다. 참여자는 다시 로그인해야 합니다.</p>
     <button class="btn red sm" id="purge">휴대폰 번호 전체 삭제</button></div>
   <div class="panel" style="margin-top:16px"><h3 style="margin:0 0 6px">전체 초기화</h3>
     <p style="font-size:14px;color:#3a433d;margin:0 0 12px">물품, 사진, 입찰, 문자 기록을 모두 지웁니다. 테스트를 마치고 실제 행사를 시작하기 전에 사용하세요.</p>
     <button class="btn red sm" id="reset">전체 초기화</button></div>`;
+  $("#seed").onclick = async () => {
+    const m = $("#seedMsg"); $("#seed").disabled = true;
+    try {
+      m.className = "msg"; m.textContent = "샘플 물품 만드는 중…";
+      const r = await api("/api/admin/samples", { method: "POST" });
+      const COLORS = [["#1f4d3a", "#2d6b52"], ["#8c5a32", "#b07a4b"], ["#b8322a", "#d4584f"], ["#3c508c", "#5a70b0"], ["#28282f", "#4a4a55"], ["#9678aa", "#b49cc6"], ["#46705a", "#6a947c"], ["#781e32", "#9e3a50"]];
+      let n = 0;
+      for (let i = 0; i < r.items.length; i++) {
+        const it = r.items[i], [c1, c2] = COLORS[i % COLORS.length], title = it.name.replace("[샘플] ", "");
+        m.textContent = `사진 넣는 중… ${++n}/${r.items.length}`;
+        await api(`/api/admin/items/${it.id}/image`, { method: "PUT", body: JSON.stringify({ dataUrl: sampleImg(900, 675, c1, c2, title, "대표 사진") }) });
+        for (const [k, sub] of [["제품 소개", "이런 제품이에요"], ["구성품", "함께 드리는 것"], ["상태", "실물 사진 자리"]].entries())
+          await api(`/api/admin/items/${it.id}/photos`, { method: "POST", body: JSON.stringify({ dataUrl: sampleImg(1000, 1300, k % 2 ? c2 : c1, k % 2 ? c1 : c2, `상세 사진 ${k + 1} · ${sub[0]}`, sub[1]) }) });
+      }
+      m.className = "msg ok"; m.textContent = "샘플 물품을 넣었습니다. 경매장 화면과 다른 탭에서 확인해 보세요.";
+      await load(); refresh(); $("#unseed").disabled = false;
+    } catch (e) { m.className = "msg err"; m.textContent = e.message; $("#seed").disabled = false; }
+  };
+  $("#unseed").onclick = async () => {
+    if (!(await modal({ title: "샘플만 삭제", body: "[샘플] 물품과 그 입찰·사진·문자 기록만 지웁니다.\n직접 등록한 물품은 그대로 남아요.", ok: "삭제", danger: true }))) return;
+    try { const r = await api("/api/admin/samples", { method: "DELETE" }); toast(`샘플 ${r.deleted}개를 삭제했습니다`); await load(); refresh(); $("#seed").disabled = false; $("#unseed").disabled = true; } catch (e) { toast(e.message); }
+  };
   $("#purge").onclick = async () => {
     if (!(await modal({ title: "휴대폰 번호 전체 삭제", body: "모든 참여자의 휴대폰 번호를 삭제합니다.\n되돌릴 수 없습니다. 먼저 ‘낙찰 결과’에서 낙찰 결과·참여자 명단 CSV를 받아 두세요.", ok: "삭제", danger: true }))) return;
     try { await api("/api/admin/purge-personal", { method: "POST" }); toast("삭제되었습니다"); await load(); refresh(); } catch (e) { toast(e.message); }
@@ -331,6 +391,16 @@ function buildData() {
 }
 
 /* ---------------- image ---------------- */
+function sampleImg(w, h, c1, c2, title, sub) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d");
+  const gr = g.createLinearGradient(0, 0, w, h); gr.addColorStop(0, c1); gr.addColorStop(1, c2); g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  g.fillStyle = "rgba(255,255,255,.12)"; for (let i = 0; i < 6; i++) { g.beginPath(); g.arc(w * (0.1 + i * 0.18), h * 0.78, w * 0.16, 0, 7); g.fill(); }
+  g.strokeStyle = "rgba(255,255,255,.85)"; g.lineWidth = 4; g.strokeRect(36, 36, w - 72, h - 72);
+  g.fillStyle = "#fff"; g.font = `900 ${Math.round(w / 15)}px "Noto Sans KR", sans-serif`; g.textAlign = "center"; g.fillText(title, w / 2, h * 0.46);
+  g.font = `500 ${Math.round(w / 30)}px "Noto Sans KR", sans-serif`; g.fillText(sub, w / 2, h * 0.46 + w / 14);
+  g.font = `700 ${Math.round(w / 26)}px "Noto Sans KR", sans-serif`; g.fillStyle = "rgba(255,255,255,.7)"; g.textAlign = "right"; g.fillText("SAMPLE", w - 80, h - 80);
+  return c.toDataURL("image/jpeg", 0.82);
+}
 // tall=true: 상세 사진용 (가로 1000px 기준, 세로로 긴 이미지 허용)
 function compress(file, tall = false) {
   return new Promise((res, rej) => {
