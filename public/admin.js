@@ -29,10 +29,10 @@ function renderLogin(msg = "") {
     e.preventDefault();
     const emp = $("#aemp").value, phone = digits($("#aph").value);
     try {
-      const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ emp, phone, agree: true }) });
+      const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ emp, phone, agree: true, admin: true }) });
       const d = await r.json();
       if (!r.ok) { $("#amsg").textContent = d.error || "로그인에 실패했습니다."; return; }
-      if (!d.isAdmin) { $("#amsg").textContent = "관리자로 지정된 사번·번호가 아닙니다."; return; }
+      if (!d.isAdmin) { $("#amsg").textContent = "관리자 정보가 맞지 않습니다."; return; }
       A.me = { token: d.token, emp: d.emp, pid: d.pid, isAdmin: true }; saveMe(A.me);
       await load(); start();
     } catch (er) { if (er.status !== 403) $("#amsg").textContent = "로그인에 실패했습니다."; }
@@ -48,7 +48,7 @@ function start() {
   if (started) return; started = true;
   connectLive({
     onState: () => { clearTimeout(reloadT); reloadT = setTimeout(() => load().then(refresh).catch(() => {}), 250); },
-    onStatus: (ok) => { const el = $("#live"); el.classList.toggle("off", !ok); el.lastElementChild.textContent = ok ? "실시간" : "재연결 중"; },
+    onStatus: (ok) => { const el = $("#live"); el.classList.toggle("off", !ok); el.lastElementChild.textContent = ok ? "연결 원활" : "재연결 중"; },
   });
   setInterval(() => $$(".cd[data-end]").forEach((el) => { const l = Number(el.dataset.end) - Date.now(); el.textContent = l > 0 ? "진행중" : "종료"; }), 1000);
 }

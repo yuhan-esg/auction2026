@@ -75,6 +75,8 @@ export class Auction extends DurableObject {
     this.addColumn("items", "is_sample", "INTEGER DEFAULT 0");
     this.addColumn("items", "base_end_at", "INTEGER");
     this.addColumn("items", "raises", "TEXT");
+    this.addColumn("sessions", "pin_sig", "TEXT");
+    this.run(`CREATE TABLE IF NOT EXISTS admin_fail(k TEXT PRIMARY KEY, n INTEGER, until INTEGER)`);
     this.run(`UPDATE items SET base_end_at=end_at WHERE base_end_at IS NULL`);
     this.run(`CREATE TABLE IF NOT EXISTS wishes(item_id TEXT NOT NULL, pid TEXT NOT NULL, emp TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(item_id, pid))`);
     if (!this.getSetting("pid_salt")) this.setSetting("pid_salt", randHex(16));
@@ -90,6 +92,23 @@ export class Auction extends DurableObject {
       if (/^\d{6}$/.test(e) && ph) (m.get(e) || m.set(e, new Set()).get(e)).add(ph);
     }
     return m;
+  }
+  // 아주 간단한 메모리 제한기 (키별 window 안에 max 회)
+  limited(key, max, windowMs) {
+    const now = Date.now();
+    this.rl = this.rl || new Map();
+    if (this.rl.size > 20000) this.rl.clear();
+    const e = this.rl.get(key);
+    if (!e || now - e.t > windowMs) { this.rl.set(key, { t: now, n: 1 }); return false; }
+    e.n++;
+    return e.n > max;
+  }
+  // ADMIN_PIN 비밀값의 서명 (PIN을 바꾸면 기존 관리자 로그인이 모두 풀림)
+  async pinSig() {
+    const pin = String(this.env.ADMIN_PIN || "");
+    if (!pin) return "";
+    if (this._pinFor !== pin) { this._pinFor = pin; this._pinSig = (await sha256Hex("pin:" + pin)).slice(0, 24); }
+    return this._pinSig;
   }
   isAdminPair(emp, phone) { const s = this.adminUsers().get(emp); return !!(s && s.has(phone)); }
   getSetting(k) { const r = this.first(`SELECT value FROM settings WHERE key=?`, k); return r ? r.value : null; }
@@ -212,10 +231,12 @@ export class Auction extends DurableObject {
   }
   // 로그인할 때 관리자 명단과 맞았고, 지금도 명단에 있으면 관리자
   sessionIsAdmin(s) {
-    return !!(s && s.is_admin === 1 && this.isAdminPair(s.emp, s.phone || ""));
+    return !!(s && s.is_admin === 1 && this.isAdminPair(s.emp, s.phone || "") && (s.pin_sig || "") === (this._curPinSig || ""));
   }
 
   async route(request) {
+    this._curPinSig = await this.pinSig();
+    this._ip = request.headers.get("cf-connecting-ip") || "local";
     const url = new URL(request.url);
     const p = url.pathname.replace(/\/+$/, "");
     const m = request.method;
@@ -275,10 +296,37 @@ export class Auction extends DurableObject {
     if (!/^\d{6}$/.test(emp)) return err(400, "사번 6자리를 정확히 입력해 주세요.");
     if (!/^01[016789]\d{7,8}$/.test(phone)) return err(400, "휴대폰 번호를 정확히 입력해 주세요.");
     if (b.agree !== true) return err(400, "개인정보 수집에 동의해 주세요.");
+    if (this.limited("login:" + this._ip, 60, 60e3)) return err(429, "로그인 시도가 너무 많습니다. 1분 뒤에 다시 해 주세요.");
+    let isAdmin = false;
+    const wantsAdmin = b.admin === true;
+    if (wantsAdmin) {
+      // 관리자 로그인: 사번+번호가 명단과 맞고, ADMIN_PIN이 정해져 있으면 PIN도 맞아야 함. 5번 틀리면 15분 잠금
+      const now = Date.now();
+      const keys = ["emp:" + emp, "ip:" + this._ip];
+      for (const k of keys) {
+        const f = this.first(`SELECT n, until FROM admin_fail WHERE k=?`, k);
+        if (f && f.until > now) return err(429, `관리자 로그인이 잠겼습니다. ${Math.ceil((f.until - now) / 60e3)}분 뒤에 다시 시도해 주세요.`);
+      }
+      const pinOk = !this._curPinSig || (await sha256Hex("pin:" + String(b.pin || ""))).slice(0, 24) === this._curPinSig;
+      isAdmin = this.isAdminPair(emp, phone) && pinOk;
+      if (!isAdmin) {
+        for (const k of keys) {
+          const f = this.first(`SELECT n, until FROM admin_fail WHERE k=?`, k);
+          const n = (f && f.until <= now && f.n >= 5 ? 0 : f ? f.n : 0) + 1;
+          this.run(`INSERT INTO admin_fail(k,n,until) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET n=excluded.n, until=excluded.until`, k, n, n >= 5 ? now + 15 * 60e3 : 0);
+        }
+        return err(403, "관리자 정보가 맞지 않습니다.", { code: "admin_denied" });
+      }
+      for (const k of keys) this.run(`DELETE FROM admin_fail WHERE k=?`, k);
+    } else {
+      // 일반 로그인이라도 명단과 맞고 PIN이 없으면 관리자 (PIN을 정했다면 관리자 화면에서 PIN으로 로그인해야 함)
+      isAdmin = !this._curPinSig && this.isAdminPair(emp, phone);
+    }
     const token = randHex(24);
     const pid = (await sha256Hex(this.getSetting("pid_salt") + ":" + emp)).slice(0, 16);
-    const isAdmin = this.isAdminPair(emp, phone);
-    this.run(`INSERT INTO sessions(token,emp,phone,pid,created_at,is_admin) VALUES(?,?,?,?,?,?)`, token, emp, phone, pid, Date.now(), isAdmin ? 1 : 0);
+    this.run(`INSERT INTO sessions(token,emp,phone,pid,created_at,is_admin,pin_sig) VALUES(?,?,?,?,?,?,?)`, token, emp, phone, pid, Date.now(), isAdmin ? 1 : 0, isAdmin ? this._curPinSig : "");
+    // 한 사번당 로그인 기기는 최근 5개까지만 유지
+    this.run(`DELETE FROM sessions WHERE emp=? AND token NOT IN (SELECT token FROM sessions WHERE emp=? ORDER BY created_at DESC LIMIT 5)`, emp, emp);
     return json({ token, emp, pid, phone: maskPhone(phone), isAdmin });
   }
 
@@ -320,6 +368,7 @@ export class Auction extends DurableObject {
     const it = this.first(`SELECT * FROM items WHERE id=?`, String(b.itemId || ""));
     if (!it) return err(404, "물품을 찾을 수 없습니다.");
     if (!this.schedule().wishOpen) return err(409, "희망가 접수 기간이 아닙니다.", { code: "wish_closed" });
+    if (this.limited("wish:" + s.token, 1, 1000)) return err(429, "너무 빨리 누르셨어요. 1초 뒤에 다시 해 주세요.");
     if (b.amount === null || b.amount === 0) {
       this.run(`DELETE FROM wishes WHERE item_id=? AND pid=?`, it.id, s.pid);
     } else {
@@ -392,7 +441,7 @@ export class Auction extends DurableObject {
     const sms = this.all(`SELECT * FROM sms_log ORDER BY id DESC LIMIT 200`).map((r) => ({ ...r, to_phone: fmtPhone(r.to_phone) }));
     const stats = this.first(`SELECT COUNT(*) AS bids, COUNT(DISTINCT pid) AS bidders FROM bids`);
     const sessions = this.first(`SELECT COUNT(DISTINCT emp) AS c FROM sessions`).c;
-    return { now, eventName: this.eventName(), faviconVer: int(this.getSetting("favicon_ver")) || 0, hasFavicon: !!this.getSetting("favicon"), smsMode: smsMode(this.env), template: this.template(), defaultTemplate: DEFAULT_TEMPLATE,
+    return { now, eventName: this.eventName(), faviconVer: int(this.getSetting("favicon_ver")) || 0, hasFavicon: !!this.getSetting("favicon"), adminPinSet: !!this._curPinSig, smsMode: smsMode(this.env), template: this.template(), defaultTemplate: DEFAULT_TEMPLATE,
       antiSnipeSeconds: this.antiSnipeMs() / 1000, schedule: this.schedule(now), items, sms, stats: { ...stats, participants: sessions } };
   }
 

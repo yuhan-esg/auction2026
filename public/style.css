@@ -10,7 +10,7 @@ button{cursor:pointer}
 .wrap{max-width:1120px;margin:0 auto;padding:0 18px}
 
 header.top{background:var(--green);color:#fdf8ec;position:sticky;top:0;z-index:20}
-header.top .wrap{display:flex;align-items:center;gap:14px;height:60px}
+header.top .wrap{display:flex;align-items:center;gap:14px;height:68px}
 .brand{font-family:"Noto Serif KR",serif;font-weight:900;font-size:19px;letter-spacing:-.3px;display:flex;align-items:center;gap:8px;cursor:pointer;color:inherit;text-decoration:none}
 .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 3px rgba(201,150,43,.25)}
 .spacer{flex:1}
@@ -103,7 +103,7 @@ header.top .wrap{display:flex;align-items:center;gap:14px;height:60px}
 .hist li.top{background:#fdf6e3;font-weight:700}
 .hist .empty{display:block;padding:14px;color:var(--muted);text-align:center}
 
-.login{min-height:calc(100vh - 60px);display:flex;align-items:center;justify-content:center;padding:30px 18px}
+.login{min-height:calc(100vh - 68px);display:flex;align-items:center;justify-content:center;padding:30px 18px}
 .lcard{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:30px 26px;width:100%;max-width:400px;box-shadow:var(--shadow)}
 .lcard h2{font-family:"Noto Serif KR",serif;margin:0 0 4px;font-size:24px}
 .lcard p.sub{margin:0 0 20px;color:var(--muted);font-size:14px}
@@ -146,7 +146,7 @@ table.t td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 /* 상품 상세 (썸네일 + 상세사진 나열 + 고정 입찰 패널) */
 .pdp{display:grid;grid-template-columns:minmax(0,1fr) 390px;grid-template-areas:"thumb aside" "detail aside";gap:22px 30px;align-items:start;padding-bottom:70px}
 .pdp-thumb{grid-area:thumb}
-.pdp-aside{grid-area:aside;position:sticky;top:76px;max-height:calc(100vh - 92px);overflow:auto;padding:2px 4px 4px 2px;scrollbar-width:thin}
+.pdp-aside{grid-area:aside;position:sticky;top:84px;max-height:calc(100vh - 100px);overflow:auto;padding:2px 4px 4px 2px;scrollbar-width:thin}
 .pdp-aside .hist ol{max-height:220px}
 .pdp-detail{grid-area:detail;min-width:0}
 .pdp-tab{font-size:16px;margin:8px 0 0;padding:12px 0;border-top:2px solid var(--ink);border-bottom:1px solid var(--line)}
@@ -197,6 +197,10 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.pdp-aside::-webkit-scrollbar,.h
 .raisegrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .raisegrid .t{padding:9px 8px;font-size:14px}
 .rprev{display:block;font-size:11.5px;color:var(--green);font-weight:700;margin-top:2px;text-align:center}
+.brand .logo{height:58px;width:auto;display:block;margin:0 0 0 -8px}
+.admin-tag{font-family:"Noto Sans KR",sans-serif;font-size:12px;font-weight:700;background:#fdf8ec;color:var(--green);border-radius:6px;padding:2px 8px;margin-left:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (max-width:560px){header.top .wrap{height:60px}.brand .logo{height:46px}}
 .hidden{display:none!important}
 .brand,.who,.hbtn,.live{white-space:nowrap}
 @media (max-width:560px){
@@ -218,3 +222,134 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.pdp-aside::-webkit-scrollbar,.h
   .price.dprice{font-size:30px}
   .toast{bottom:92px}
 }
+
+/* =========================================================
+   말랑 테마 — 로고 색(진초록·초록·연두·빨강·노랑)과 스티커 느낌
+   ========================================================= */
+:root{
+  --bg:#fbf5e6; --paper:#ffffff; --ink:#124225; --muted:#6f7d6a; --line:#124225;
+  --green:#124225; --green2:#277148; --leaf:#6d9c40; --red:#cf3731; --gold:#f4d041; --soft:#eef5e4;
+  --ok:#277148; --shadow:4px 5px 0 var(--gold);
+}
+body{background-color:var(--bg);
+  background-image:radial-gradient(circle at 20px 20px,rgba(109,156,64,.10) 2.5px,transparent 3px),radial-gradient(circle at 60px 50px,rgba(244,208,65,.18) 2px,transparent 2.5px);
+  background-size:80px 70px}
+header.top{background:var(--green);box-shadow:0 4px 0 rgba(18,66,37,.15)}
+.hbtn{border-radius:999px;border:2px solid rgba(255,255,255,.35);font-weight:700}
+.live i{background:#a6e07a}
+
+/* 제목 */
+.hero h1{color:var(--green2);font-weight:900;text-decoration:underline wavy var(--gold) 3px;text-underline-offset:10px;text-decoration-skip-ink:none}
+.hero p{color:var(--muted)}
+
+/* 스티커 카드 공통 */
+.stat,.card,.panel,.lcard,.mbox,.tscroll,.hist ol{border:2.5px solid var(--line)!important;box-shadow:var(--shadow);background:var(--paper)}
+.stat{border-radius:20px;padding:12px 16px}
+.stat b{color:var(--green2);font-weight:900}
+.stat.hl{background:#fff8d6}
+.panel{border-radius:24px}
+.lcard{border-radius:28px}
+.mbox{border-radius:24px}
+.tscroll{border-radius:18px}
+
+/* 필터 칩 */
+.chip{border:2px solid var(--line);background:#fff;font-weight:700;padding:6px 15px;transition:transform .12s}
+.chip:hover{transform:translateY(-1px)}
+.chip.on{background:var(--green);color:#fff;box-shadow:0 3px 0 var(--gold)}
+
+/* 물품 카드 */
+.grid{gap:20px}
+.card{border-radius:24px;padding:10px 10px 0}
+.card:hover{transform:translate(-2px,-3px) rotate(-.4deg);box-shadow:7px 9px 0 var(--gold)}
+.thumb{border-radius:16px;border:2px solid var(--line)}
+.no{background:var(--gold);color:var(--ink);border:2px solid var(--line);border-radius:999px;font-weight:900;box-shadow:none}
+.badge{border:2px solid var(--line);border-radius:999px;font-weight:800;padding:2px 10px}
+.b-live{background:var(--leaf);color:#fff}
+.b-soon{background:var(--red);color:#fff}
+.b-done{background:var(--ink);color:#fff}
+.b-none{background:#c9c6b8;color:var(--ink)}
+.b-wish{background:var(--gold);color:var(--ink)}
+.cbody{padding:12px 6px 14px}
+.cname{font-weight:800}
+.price{color:var(--ink);font-weight:900}
+.mine{border:1.5px solid var(--line);border-radius:999px;background:#fff8d6;color:var(--ink)}
+.mine.out{background:#ffe3df;color:var(--red);border-color:var(--red)}
+.stamp span{border:3px solid var(--red);border-radius:16px;box-shadow:3px 3px 0 rgba(207,55,49,.25);font-weight:900}
+
+/* 상세 */
+.dimg{border-radius:24px;border:2.5px solid var(--line);box-shadow:var(--shadow)}
+.dtitle{font-family:"Noto Sans KR",sans-serif;font-weight:900;color:var(--ink)}
+.dprice{color:var(--green2)}
+.pdp-tab{border-top:3px solid var(--line);border-bottom:2px dashed rgba(18,66,37,.25)}
+.dphotos{border-radius:18px;border:2.5px solid var(--line)}
+.note{border-radius:16px;border:2px solid #e9cf5a;background:#fff8d6;color:#5a4a10}
+.note.red{border-color:var(--red);background:#ffe9e5}
+.hist li.top{background:#fff8d6}
+.closedbox{border-radius:18px;border:2.5px solid var(--line)}
+.closedbox.win{background:linear-gradient(135deg,#f4d041,#e9a93a);color:var(--ink)}
+.wishbox{border-radius:18px;border:2px solid #e9cf5a}
+.sched{border-radius:24px;border:2.5px solid var(--line);box-shadow:var(--shadow);background:var(--green2);
+  background-image:radial-gradient(circle at 12px 12px,rgba(255,255,255,.12) 3px,transparent 3.5px);background-size:34px 34px}
+
+/* 버튼: 말랑하게 눌리는 느낌 */
+.btn{border-radius:999px;border:2.5px solid var(--line);background:var(--green2);box-shadow:0 4px 0 var(--line);transition:transform .08s,box-shadow .08s}
+.btn:hover{background:#2f8455}
+.btn:active:not(:disabled){transform:translateY(3px);box-shadow:0 1px 0 var(--line)}
+.btn.ghost{background:#fff;color:var(--ink)}
+.btn.red{background:var(--red)}
+.btn:disabled{background:#d6d3c6;border-color:#b9b6a8;box-shadow:0 3px 0 #b9b6a8;color:#fff}
+.tapfirst{background:var(--gold);color:var(--ink)}
+.tapfirst:hover{background:#f7da5c}
+.taps{gap:10px}
+.tap{border:2.5px solid var(--line);border-radius:20px;color:var(--ink);background:#fff;box-shadow:0 4px 0 var(--line)}
+.tap b{font-size:18px}
+.tap:hover:not(:disabled){background:var(--leaf);color:#fff}
+.tap:active:not(:disabled){transform:translateY(3px);box-shadow:0 1px 0 var(--line)}
+.tap:disabled{border-color:#c9c6b8;color:#b9b6a8;box-shadow:0 3px 0 #ddd9cb}
+
+/* 입력칸 */
+input.t,textarea.t,select.t{border:2px solid rgba(18,66,37,.35);border-radius:14px}
+input.t:focus,textarea.t:focus{border-color:var(--green2);box-shadow:0 0 0 4px rgba(109,156,64,.18)}
+
+/* 로그인 */
+.lcard .lg-logo{display:block;height:84px;margin:0 auto 8px}
+.lcard h2{text-align:center;color:var(--green2)}
+.lcard p.sub{text-align:center}
+
+/* 모바일 하단 바, 토스트 */
+.mbar.show{border-top:2.5px solid var(--line);border-radius:22px 22px 0 0}
+.toast{background:var(--green);border:2px solid var(--gold);font-weight:700}
+
+/* 관리자 표 */
+table.t th{background:#eef5e4;color:var(--ink)}
+.hero h1{margin-bottom:14px}
+.tap{padding:13px 2px;white-space:nowrap}
+.tap b{font-size:16.5px;letter-spacing:-.3px}
+@media (max-width:420px){.tap b{font-size:18px}}
+/* 노란 그림자 제거 */
+:root{--shadow:none}
+.card:hover{box-shadow:none}
+.chip.on{box-shadow:none}
+.stamp span{box-shadow:none}
+.toast{border-color:transparent}
+
+/* ===== 제안 B: 외곽선 가볍게 · 빨강 포인트 · 연두 활용 ===== */
+:root{--soft-line:#bcd7a8}
+.stat,.card,.tscroll,.hist ol,.lcard{border:2px solid var(--soft-line)!important}
+.thumb{border:1.5px solid var(--soft-line)}
+.dimg,.dphotos{border:2px solid var(--soft-line)}
+.chip{border:2px solid var(--soft-line);color:var(--green2)}
+.chip.on{border-color:var(--green);color:#fff}
+.stat b{color:#5b8a33}
+.stat.hl b{color:var(--red)}
+.hero h1 em{font-style:normal;color:var(--red)}
+.mine{border:1.5px solid var(--red);background:#fff0ee;color:var(--red)}
+.mine::before{content:"♥ "}
+.mine.out::before{content:""}
+.no{border-width:1.5px}
+.badge{border-width:1.5px}
+.b-live{border-color:#557d30}
+.b-soon{border-color:#a8291f}
+.b-wish{border-color:#c9a722}
+.card:hover{border-color:var(--leaf)!important}
+.pdp-tab{border-top-color:var(--soft-line)}

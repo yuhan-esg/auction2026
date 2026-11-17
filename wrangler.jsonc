@@ -18,8 +18,8 @@
     // "dry-run" = 문자를 실제로 보내지 않고 관리자 화면에 미리보기로만 기록
     // "live"    = 솔라피로 실제 발송 (README 참고)
     "SMS_MODE": "dry-run",
-    // 마감 N초 전 입찰 시 마감을 N초 뒤로 연장 (0 = 사용 안 함, 예: "60")
-    "ANTI_SNIPE_SECONDS": "0"
+    // 마감 N초 안에 입찰이 들어오면 남은 시간을 N초로 다시 맞춤 (기본값. 관리자 화면에서 바꾸면 그 값이 우선)
+    "ANTI_SNIPE_SECONDS": "30"
   }
   // 비밀값(secret)은 여기에 적지 말고 `npx wrangler secret put 이름` 으로 등록하세요:
   //   ADMIN_USERS         관리자 명단 "사번:휴대폰,사번:휴대폰" (필수, README 참고)

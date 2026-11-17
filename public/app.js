@@ -61,7 +61,7 @@ async function boot() {
       }
       render();
     },
-    onStatus: (ok) => { const el = $("#live"); el.classList.toggle("off", !ok); el.lastElementChild.textContent = ok ? "실시간" : "재연결 중"; },
+    onStatus: (ok) => { const el = $("#live"); el.classList.toggle("off", !ok); el.lastElementChild.textContent = ok ? "연결 원활" : "재연결 중"; },
   });
   window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
   setInterval(tick, 1000);
@@ -102,7 +102,8 @@ function renderLogin(app) {
   if (app.dataset.view === "login") return;
   app.dataset.view = "login";
   app.innerHTML = `<div class="login"><form class="lcard" id="lf" novalidate>
-    <h2>${esc(S.event)}</h2>
+    <img class="lg-logo" src="/logo.svg" alt="">
+    <h2>경매 입장하기</h2>
     <p class="sub">임직원 기부 물품 경매에 참여하시려면<br>사번과 연락처를 입력해 주세요.</p>
     <label class="f" for="emp">사번 (6자리)</label>
     <input class="t" id="emp" inputmode="numeric" maxlength="6" placeholder="예) 123456" autocomplete="off">
@@ -141,7 +142,7 @@ function badge(it, s) {
 function renderList(app) {
   if (app.dataset.view !== "list") {
     app.dataset.view = "list";
-    app.innerHTML = `<div class="wrap"><section class="hero"><h1>마음을 나누는 연말 경매</h1><p>임직원이 기부한 물품을 경매로 나눕니다. 수익금은 전액 기부됩니다.</p>
+    app.innerHTML = `<div class="wrap"><section class="hero"><h1>마음을 나누는 <em>연말 경매</em></h1><p>임직원이 기부한 물품을 경매로 나눕니다. 수익금은 전액 기부됩니다.</p>
       <div id="sched"></div><div class="stats" id="stats"></div><div class="filters" id="filters"></div></section><div class="grid" id="grid"></div></div>`;
   }
   const rows = S.items.map((it) => [it, st(it)]);
@@ -184,7 +185,7 @@ function renderList(app) {
     pe.textContent = s.pre && !it.top && !it.start ? "추후 공개" : won(p); flashIfChanged(pe, "l:" + it.id, p);
     $(".cnt", c).textContent = s.pre ? `관심 ${it.wishCount}명` : `입찰 ${it.bidCount}건`;
     const cd = $(".cd", c); cd.dataset.end = it.endAt; updateCd(cd);
-    $(".tagslot", c).innerHTML = s.pre ? (s.myWish ? `<span class="mine">내 희망가 ${won(s.myWish)}</span>` : "") : s.mineTop ? `<span class="mine">${s.closed ? "🎉 내가 낙찰" : "내가 최고가"}</span>` : s.mineIn && !s.closed ? `<span class="mine out">더 높은 입찰 발생</span>` : "";
+    $(".tagslot", c).innerHTML = s.pre ? (s.myWish ? `<span class="mine">내 희망가 ${won(s.myWish)}</span>` : "") : s.mineTop ? `<span class="mine">${s.closed ? "내가 낙찰" : "내가 최고가"}</span>` : s.mineIn && !s.closed ? `<span class="mine out">더 높은 입찰 발생</span>` : "";
   }
 }
 function flashIfChanged(el, key, v) {
@@ -225,7 +226,8 @@ function renderItem(app, id) {
   if (!it) {
     if (S.loaded && (S.detail?.missing || S.items.length)) {
       app.dataset.view = "missing";
-      app.innerHTML = `<div class="wrap"><button class="back" onclick="location.hash=''">← 전체 목록</button><div class="center">물품을 찾을 수 없습니다.</div></div>`;
+      app.innerHTML = `<div class="wrap"><button class="back" id="back2">← 전체 목록</button><div class="center">물품을 찾을 수 없습니다.</div></div>`;
+      $("#back2").onclick = () => (location.hash = "");
     }
     return;
   }
@@ -300,7 +302,7 @@ function renderItem(app, id) {
       area.innerHTML = !s.sold
         ? `<div class="closedbox none"><b>경매 종료 · 유찰</b><div style="font-size:13px;margin-top:4px;opacity:.85">입찰자가 없어 유찰되었습니다.</div></div>`
         : s.mineTop
-          ? `<div class="closedbox win"><b>🎉 축하합니다! 낙찰되셨습니다.</b><div style="font-size:13px;margin-top:4px">낙찰가 ${won(it.top.amount)} · 입력하신 휴대폰 번호로 수령 안내 문자를 드립니다.</div></div>`
+          ? `<div class="closedbox win"><b>♥ 축하합니다! 낙찰되셨습니다.</b><div style="font-size:13px;margin-top:4px">낙찰가 ${won(it.top.amount)} · 입력하신 휴대폰 번호로 수령 안내 문자를 드립니다.</div></div>`
           : `<div class="closedbox"><b>경매 종료 · 낙찰완료</b><div style="font-size:13px;margin-top:4px;opacity:.85">낙찰자 ${esc(it.top.emp)} · ${won(it.top.amount)}<br>더 이상 입찰할 수 없습니다.</div></div>`;
     }
     return;
@@ -352,7 +354,7 @@ function updateMbar() {
   $("#mprice").textContent = won(it.top ? it.top.amount : it.start);
   const cd = $("#mcd"); cd.dataset.end = it.endAt; updateCd(cd);
   const b = $("#mgo");
-  b.textContent = s.pre ? (wishOpen() ? (s.myWish ? "희망가 수정" : "희망가 남기기") : "경매 전") : s.closed ? (s.mineTop ? "🎉 낙찰" : "경매 종료") : s.mineTop ? "내가 최고가" : "입찰하기";
+  b.textContent = s.pre ? (wishOpen() ? (s.myWish ? "희망가 수정" : "희망가 남기기") : "경매 전") : s.closed ? (s.mineTop ? "♥ 낙찰" : "경매 종료") : s.mineTop ? "내가 최고가" : "입찰하기";
   b.disabled = s.closed || (s.pre && !wishOpen());
   if (s.pre) { $("#mlabel").textContent = "경매 시작"; $("#mprice").textContent = fmtDT(S.schedule.startAt); $("#mcd").dataset.start = S.schedule.startAt; } else delete $("#mcd").dataset.start;
 }
