@@ -30,6 +30,11 @@ async function sha256Hex(s) {
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 const DEFAULT_RAISES = [1000, 3000, 5000, 10000];
+const DEFAULT_NOTICE = [
+  "입찰 버튼을 누르면 확인 없이 바로 입찰돼요. 실수로 누르셨다면 마감 전에 경매 담당자에게 알려 주세요.",
+  "마감 30초 안에 입찰이 들어오면 남은 시간이 30초로 다시 늘어나요. 마지막까지 누구에게나 기회가 있어요.",
+  "같은 금액이 동시에 들어오면 먼저 도착한 입찰만 인정돼요.",
+].join("\n");
 // 물품별 입찰 버튼 금액 4개 (없으면 기본값)
 function itemRaises(it) {
   try { const r = JSON.parse(it.raises || "null"); if (Array.isArray(r) && r.length) return r; } catch (e) {}
@@ -77,6 +82,7 @@ export class Auction extends DurableObject {
     this.addColumn("items", "raises", "TEXT");
     this.addColumn("sessions", "pin_sig", "TEXT");
     this.run(`CREATE TABLE IF NOT EXISTS admin_fail(k TEXT PRIMARY KEY, n INTEGER, until INTEGER)`);
+    this.run(`CREATE TABLE IF NOT EXISTS admin_log(id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER, emp TEXT, action TEXT, item_no INTEGER, item_name TEXT, detail TEXT)`);
     this.run(`UPDATE items SET base_end_at=end_at WHERE base_end_at IS NULL`);
     this.run(`CREATE TABLE IF NOT EXISTS wishes(item_id TEXT NOT NULL, pid TEXT NOT NULL, emp TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(item_id, pid))`);
     if (!this.getSetting("pid_salt")) this.setSetting("pid_salt", randHex(16));
@@ -114,6 +120,16 @@ export class Auction extends DurableObject {
   getSetting(k) { const r = this.first(`SELECT value FROM settings WHERE key=?`, k); return r ? r.value : null; }
   setSetting(k, v) { this.run(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, k, String(v)); }
 
+  // 참여자 화면 공지 (관리자가 수정, 빈 칸이면 숨김)
+  notice() {
+    const v = this.getSetting("notice");
+    return v === null ? DEFAULT_NOTICE : v;
+  }
+  // 관리자 작업 기록
+  audit(s, action, item, detail = "") {
+    this.run(`INSERT INTO admin_log(at,emp,action,item_no,item_name,detail) VALUES(?,?,?,?,?,?)`,
+      Date.now(), s ? s.emp : "", action, item ? item.no : null, item ? item.name : "", String(detail).slice(0, 500));
+  }
   eventName() { return this.getSetting("event_name") || this.env.EVENT_NAME || "연말 나눔 경매"; }
   template() { return this.getSetting("sms_template") || DEFAULT_TEMPLATE; }
   // 마감 직전 연장(초): 관리자 화면 설정 > wrangler 변수 > 기본 30초. 0이면 끔
@@ -153,7 +169,7 @@ export class Auction extends DurableObject {
   items() { return this.all(`SELECT * FROM items ORDER BY no ASC`); }
   state() {
     const now = Date.now();
-    return { now, eventName: this.eventName(), faviconVer: int(this.getSetting("favicon_ver")) || 0, schedule: this.schedule(now), items: this.items().map((it) => this.summary(it, now)) };
+    return { now, eventName: this.eventName(), notice: this.notice(), faviconVer: int(this.getSetting("favicon_ver")) || 0, schedule: this.schedule(now), items: this.items().map((it) => this.summary(it, now)) };
   }
 
   /* ---------------- realtime ---------------- */
@@ -284,7 +300,7 @@ export class Auction extends DurableObject {
       const s = this.session(request);
       if (!s) return err(401, "로그인이 필요합니다.");
       if (!this.sessionIsAdmin(s)) return err(403, "관리자로 지정된 계정이 아닙니다.");
-      return this.admin(request, p.slice("/api/admin".length), m, url);
+      return this.admin(request, p.slice("/api/admin".length), m, url, s);
     }
     return err(404, "not found");
   }
@@ -344,6 +360,11 @@ export class Auction extends DurableObject {
     const top = this.topBid(it.id, it.end_at);
     if (!this.schedule(now).started) return err(409, "아직 경매가 시작되지 않았습니다.", { code: "not_started" });
     const min = top ? top.amount + it.step : Math.max(it.start_price, it.step);
+    if (top && amount === top.amount) {
+      const gap = Math.max(1, now - top.at);
+      const when = gap < 100 ? "아주 근소한 차이(0.1초 미만)로" : gap < 1000 ? `${(gap / 1000).toFixed(1)}초 차이로` : `${Math.round(gap / 1000)}초 먼저`;
+      return err(409, `같은 금액(${amount.toLocaleString("ko-KR")}원)이 ${when} 먼저 들어왔어요.\n먼저 도착한 입찰만 인정돼요.`, { code: "same_amount", minNext: min, gapMs: gap });
+    }
     if (!Number.isInteger(amount) || amount < min) return err(409, `${min.toLocaleString("ko-KR")}원 이상 입찰해 주세요.`, { code: "low", minNext: min });
     if (amount > MAX_AMOUNT) return err(400, "입찰 가능한 최대 금액을 넘었습니다.");
     if (top && top.pid === s.pid) return err(409, "이미 최고가 입찰자입니다.", { code: "already_top" });
@@ -441,11 +462,11 @@ export class Auction extends DurableObject {
     const sms = this.all(`SELECT * FROM sms_log ORDER BY id DESC LIMIT 200`).map((r) => ({ ...r, to_phone: fmtPhone(r.to_phone) }));
     const stats = this.first(`SELECT COUNT(*) AS bids, COUNT(DISTINCT pid) AS bidders FROM bids`);
     const sessions = this.first(`SELECT COUNT(DISTINCT emp) AS c FROM sessions`).c;
-    return { now, eventName: this.eventName(), faviconVer: int(this.getSetting("favicon_ver")) || 0, hasFavicon: !!this.getSetting("favicon"), adminPinSet: !!this._curPinSig, smsMode: smsMode(this.env), template: this.template(), defaultTemplate: DEFAULT_TEMPLATE,
+    return { now, eventName: this.eventName(), faviconVer: int(this.getSetting("favicon_ver")) || 0, hasFavicon: !!this.getSetting("favicon"), adminPinSet: !!this._curPinSig, notice: this.notice(), defaultNotice: DEFAULT_NOTICE, smsMode: smsMode(this.env), template: this.template(), defaultTemplate: DEFAULT_TEMPLATE,
       antiSnipeSeconds: this.antiSnipeMs() / 1000, schedule: this.schedule(now), items, sms, stats: { ...stats, participants: sessions } };
   }
 
-  async admin(request, p, m, url) {
+  async admin(request, p, m, url, sess) {
     const body = async () => request.json().catch(() => ({}));
     let mm;
     try {
@@ -457,6 +478,7 @@ export class Auction extends DurableObject {
         const id = "i" + Date.now().toString(36) + randHex(2);
         this.run(`INSERT INTO items(id,no,name,description,donor,start_price,step,raises,end_at,base_end_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
           id, d.no, d.name, d.description, d.donor, d.start_price, d.step, d.raises, d.end_at, d.end_at, Date.now());
+        this.audit(sess, "물품 등록", { no: d.no, name: d.name }, `시작가 ${d.start_price.toLocaleString("ko-KR")}원`);
         await this.afterItemChange();
         return json({ ok: true, id });
       }
@@ -474,10 +496,18 @@ export class Auction extends DurableObject {
             merged.no, merged.name, merged.description, merged.donor, merged.start_price, merged.step, merged.raises ?? null, merged.end_at,
             reopen ? null : it.settled_at, reopen ? null : it.winner_bid_id, id);
           if (d.end_at) this.run(`UPDATE items SET base_end_at=end_at WHERE id=?`, id);
+          const ch = [];
+          if (d.start_price !== undefined && d.start_price !== it.start_price) ch.push(`시작가 ${it.start_price.toLocaleString("ko-KR")}→${d.start_price.toLocaleString("ko-KR")}원`);
+          if (d.end_at && d.end_at !== it.end_at) ch.push(`종료 시각 변경${reopen ? " (다시 진행)" : ""}`);
+          if (d.raises && d.raises !== it.raises) ch.push(`버튼 금액 ${JSON.parse(d.raises).join("/")}`);
+          if (d.name && d.name !== it.name) ch.push(`이름 ${it.name}→${d.name}`);
+          this.audit(sess, "물품 수정", merged, ch.join(", ") || "설명 등 수정");
           await this.afterItemChange();
           return json({ ok: true });
         }
         if (m === "DELETE") {
+          const nb = this.first(`SELECT COUNT(*) AS c FROM bids WHERE item_id=?`, id).c;
+          this.audit(sess, "물품 삭제", it, nb ? `입찰 ${nb}건 함께 삭제` : "");
           this.run(`DELETE FROM items WHERE id=?`, id);
           this.run(`DELETE FROM bids WHERE item_id=?`, id);
           this.run(`DELETE FROM images WHERE item_id=?`, id);
@@ -542,17 +572,27 @@ export class Auction extends DurableObject {
         }
         if (typeof b.eventName === "string") { const n = b.eventName.trim().slice(0, 40); n ? this.setSetting("event_name", n) : this.run(`DELETE FROM settings WHERE key='event_name'`); }
         if ("extendSeconds" in b) { const v = Math.max(0, Math.min(600, int(b.extendSeconds) || 0)); this.setSetting("extend_seconds", v); }
+        if (typeof b.notice === "string") this.setSetting("notice", b.notice.trim().slice(0, 1500));
+        const parts = [];
+        if ("startAt" in b || "wishEndAt" in b) parts.push("경매 일정");
+        if ("extendSeconds" in b) parts.push(`연장 ${int(b.extendSeconds) || 0}초`);
+        if (typeof b.eventName === "string") parts.push("행사 이름");
+        if (typeof b.notice === "string") parts.push("공지");
+        if (typeof b.favicon === "string") parts.push("탭 아이콘");
+        this.audit(sess, "설정 변경", null, parts.join(", "));
         this.broadcast();
         return json({ ok: true, schedule: this.schedule() });
       }
       if ((mm = p.match(/^\/items\/([\w-]+)\/wishes$/)) && m === "GET") {
         return json({ wishes: this.all(`SELECT emp, amount, at FROM wishes WHERE item_id=? ORDER BY amount DESC, at ASC`, mm[1]) });
       }
-      if (p === "/samples" && m === "POST") return this.seedSamples();
+      if (p === "/log" && m === "GET") return json({ log: this.all(`SELECT * FROM admin_log ORDER BY id DESC LIMIT 500`) });
+      if (p === "/samples" && m === "POST") { this.audit(sess, "샘플 물품 넣기", null); return this.seedSamples(); }
       if (p === "/samples" && m === "DELETE") {
         const ids = this.all(`SELECT id FROM items WHERE is_sample=1`).map((r) => r.id);
         for (const id of ids) for (const t of ["bids", "images", "photos", "sms_log", "wishes"]) this.run(`DELETE FROM ${t} WHERE item_id=?`, id);
         this.run(`DELETE FROM items WHERE is_sample=1`);
+        this.audit(sess, "샘플 물품 삭제", null, `${ids.length}개`);
         this.run(`DELETE FROM sessions WHERE emp LIKE '9999%'`);
         await this.afterItemChange();
         return json({ ok: true, deleted: ids.length });
@@ -562,6 +602,7 @@ export class Auction extends DurableObject {
         if (!(t > 0)) return err(400, "종료 시각을 확인해 주세요.");
         const reopen = t > Date.now();
         this.run(reopen ? `UPDATE items SET end_at=?, base_end_at=?, settled_at=NULL, winner_bid_id=NULL` : `UPDATE items SET end_at=?, base_end_at=?`, t, t);
+        this.audit(sess, "종료 시각 일괄 변경", null, new Date(t + 9 * 3600e3).toISOString().slice(0, 16).replace("T", " "));
         await this.afterItemChange();
         return json({ ok: true });
       }
@@ -570,6 +611,8 @@ export class Auction extends DurableObject {
         if (!bid) return err(404, "입찰을 찾을 수 없습니다.");
         if (bid.settled_at) return err(409, "낙찰이 확정된 물품의 입찰은 취소할 수 없습니다.");
         this.run(`DELETE FROM bids WHERE id=?`, bid.id);
+        const bit = this.first(`SELECT * FROM items WHERE id=?`, bid.item_id);
+        this.audit(sess, "입찰 취소", bit, `사번 ${bid.emp} · ${bid.amount.toLocaleString("ko-KR")}원 · 입찰 시각 ${new Date(bid.at + 9 * 3600e3).toISOString().slice(5, 19).replace("T", " ")}`);
         this.broadcast();
         return json({ ok: true });
       }
@@ -607,6 +650,7 @@ export class Auction extends DurableObject {
         const top = this.topBid(it.id, it.end_at);
         if (!top) return err(409, "낙찰자가 없습니다.");
         await this.notifyWinner(it, top, "manual");
+        this.audit(sess, "낙찰 문자 다시 보내기", it, `사번 ${top.emp}`);
         return json({ ok: true });
       }
       if (p === "/export.csv" && m === "GET") return this.exportCsv(url.searchParams.get("type") || "winners");
@@ -614,12 +658,14 @@ export class Auction extends DurableObject {
         this.run(`UPDATE bids SET phone=NULL`);
         this.run(`DELETE FROM sessions WHERE is_admin<>1`);
         this.run(`UPDATE sms_log SET to_phone=''`);
+        this.audit(sess, "휴대폰 번호 전체 삭제", null);
         return json({ ok: true });
       }
       if (p === "/reset-all" && m === "POST") {
         const b = await body();
         if (b.confirm !== "전체삭제") return err(400, "확인 문구가 필요합니다.");
         for (const t of ["items", "images", "photos", "bids", "sms_log", "wishes"]) this.run(`DELETE FROM ${t}`);
+        this.audit(sess, "전체 초기화", null);
         await this.afterItemChange();
         return json({ ok: true });
       }

@@ -42,7 +42,10 @@ async function boot() {
   connectLive({
     onState: (d) => {
       S.offset = d.now - Date.now();
+      const before = S.loaded ? S.items : null;
       S.items = d.items; S.loaded = true;
+      if (d.notice !== undefined) S.notice = d.notice;
+      if (before) for (const it of d.items) checkOutbid(before.find((x) => x.id === it.id), it);
       if (d.schedule) S.schedule = d.schedule;
       applyFavicon(d.faviconVer);
       if (d.eventName && d.eventName !== S.event) { S.event = d.eventName; $("#eventName").textContent = d.eventName; document.title = d.eventName; }
@@ -52,6 +55,7 @@ async function boot() {
     onItem: (d) => {
       S.offset = d.now - Date.now();
       const i = S.items.findIndex((x) => x.id === d.item.id);
+      checkOutbid(i >= 0 ? S.items[i] : null, d.item);
       if (i >= 0) S.items[i] = d.item; else S.items.push(d.item);
       if (d.bid && S.detail && S.detail.item?.id === d.item.id) {
         // 상세 화면을 보고 있으면 서버에 다시 묻지 않고 새 입찰만 끼워 넣음
@@ -70,6 +74,41 @@ async function boot() {
 async function loadMy() {
   try { const r = await api("/api/my"); S.myWishes = r.wishes || {}; r.bidItems.forEach((id) => S.myItems.add(id)); } catch (e) {}
 }
+/* ---------------- 추월 알림 ---------------- */
+function checkOutbid(prev, it) {
+  if (!S.me || !prev || !prev.top || !it.top) return;
+  if (prev.top.pid !== S.me.pid || it.top.pid === S.me.pid) return; // 내가 최고가였다가 다른 사람에게 넘어간 경우만
+  if (it.endAt - now() <= 0) return;
+  outbidAlert(it);
+}
+let titleT = null, baseTitle = "";
+function outbidAlert(it) {
+  try { if (navigator.vibrate) navigator.vibrate([90, 60, 90]); } catch (e) {}
+  // 다른 탭을 보고 있으면 탭 제목을 깜빡여서 알려 줌
+  if (document.hidden && !titleT) {
+    baseTitle = document.title; let on = false;
+    titleT = setInterval(() => { on = !on; document.title = on ? "(!) 추월당했어요" : baseTitle; }, 900);
+  }
+  const viewing = route().v === "item" && route().id === it.id;
+  const box = $("#alerts") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "alerts" }));
+  const old = box.querySelector(`[data-id="${CSS.escape(it.id)}"]`); if (old) old.remove();
+  const a = document.createElement("div");
+  a.className = "alert"; a.dataset.id = it.id;
+  a.innerHTML = `<div class="al-body"><b>누군가 더 높게 불렀어요!</b><span class="al-item"></span><span class="al-meta"></span></div>
+    <div class="al-btns">${viewing ? "" : `<button class="btn sm" data-go>바로 가기</button>`}<button class="al-x" aria-label="닫기">✕</button></div>`;
+  $(".al-item", a).textContent = `No.${it.no} ${it.name}`;
+  const meta = $(".al-meta", a);
+  const upd = () => { const l = it.endAt - now(); meta.textContent = `현재 ${won(it.top.amount)} · ${l > 0 ? countdown(l) + " 남음" : "마감"}`; };
+  upd(); const t = setInterval(upd, 1000);
+  const close = () => { clearInterval(t); a.classList.add("out"); setTimeout(() => a.remove(), 250); };
+  $(".al-x", a).onclick = close;
+  const go = $("[data-go]", a); if (go) go.onclick = () => { location.hash = "item-" + it.id; close(); };
+  box.prepend(a);
+  while (box.children.length > 3) box.lastElementChild.remove();
+  setTimeout(close, 12000);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && titleT) { clearInterval(titleT); titleT = null; document.title = baseTitle || document.title; } });
+
 function rememberMine(itemId) {
   S.myItems.add(itemId);
   try { localStorage.setItem(LS + ".items", JSON.stringify([...S.myItems])); } catch (e) {}
@@ -109,7 +148,7 @@ function renderLogin(app) {
     <input class="t" id="emp" inputmode="numeric" maxlength="6" placeholder="예) 123456" autocomplete="off">
     <label class="f" for="ph">휴대폰 번호</label>
     <input class="t" id="ph" inputmode="tel" maxlength="13" placeholder="010-0000-0000" autocomplete="tel">
-    <label class="agree"><input type="checkbox" id="ag"><span>낙찰 안내 문자 발송을 위해 사번과 휴대폰 번호를 수집하며, 경매 종료 후 안내가 끝나면 삭제합니다. 번호는 경매 담당자만 볼 수 있습니다.</span></label>
+    <label class="agree"><input type="checkbox" id="ag"><span>낙찰 안내 문자 발송을 위해 사번과 휴대폰 번호를 수집하며, 경매 종료 후 안내가 끝나면 삭제합니다.<br>번호는 경매 담당자만 볼 수 있습니다.</span></label>
     <button class="btn" style="width:100%" id="lgo">입장하기</button>
     <div class="msg err" id="lmsg"></div>
   </form></div>`;
@@ -122,6 +161,8 @@ function renderLogin(app) {
     if (!/^\d{6}$/.test(e6)) { msg.textContent = "사번 6자리를 정확히 입력해 주세요."; emp.focus(); return; }
     if (!/^01[016789]\d{7,8}$/.test(p)) { msg.textContent = "휴대폰 번호를 정확히 입력해 주세요."; ph.focus(); return; }
     if (!$("#ag").checked) { msg.textContent = "개인정보 수집에 동의해 주세요."; return; }
+    const ok = await modal({ title: "입력하신 정보가 맞나요?", body: `사번  ${e6}\n휴대폰  ${p.replace(/(\d{3})(\d{3,4})(\d{4})/, "$1-$2-$3")}\n\n낙찰되면 이 번호로 안내 문자를 보내 드려요.\n번호가 틀리면 낙찰 안내를 받을 수 없어요.`, ok: "맞아요, 입장할게요", cancel: "다시 입력" });
+    if (!ok) { ph.focus(); return; }
     $("#lgo").disabled = true;
     try {
       const r = await api("/api/login", { method: "POST", body: JSON.stringify({ emp: e6, phone: p, agree: true }) });
@@ -143,10 +184,11 @@ function renderList(app) {
   if (app.dataset.view !== "list") {
     app.dataset.view = "list";
     app.innerHTML = `<div class="wrap"><section class="hero"><h1>마음을 나누는 <em>연말 경매</em></h1><p>임직원이 기부한 물품을 경매로 나눕니다. 수익금은 전액 기부됩니다.</p>
-      <div id="sched"></div><div class="stats" id="stats"></div><div class="filters" id="filters"></div></section><div class="grid" id="grid"></div></div>`;
+      <div id="sched"></div><div id="notice"></div><div class="stats" id="stats"></div><div class="filters" id="filters"></div></section><div class="grid" id="grid"></div></div>`;
   }
   const rows = S.items.map((it) => [it, st(it)]);
   $("#sched").innerHTML = schedBanner();
+  renderNotice();
   const live = rows.filter(([, s]) => !s.closed && !s.pre).length;
   const total = rows.reduce((a, [it]) => a + (it.top ? it.top.amount : 0), 0);
   const bids = rows.reduce((a, [it]) => a + it.bidCount, 0);
@@ -180,9 +222,11 @@ function renderList(app) {
     $(".bslot", c).innerHTML = badge(it, s);
     const stamp = $(".stamp", c); stamp.classList.toggle("hidden", !s.closed); stamp.classList.toggle("gray", !s.sold);
     stamp.firstElementChild.textContent = s.sold ? "낙찰완료" : "유찰";
-    $(".plabel", c).textContent = s.closed ? (s.sold ? "낙찰가" : "시작가") : it.top ? "현재 최고가" : "시작가";
+    $(".plabel", c).textContent = s.pre ? "경매 시작 전" : s.closed ? (s.sold ? "낙찰가" : "시작가") : it.top ? "현재 최고가" : "시작가";
     const pe = $(".price", c), p = it.top ? it.top.amount : it.start;
-    pe.textContent = s.pre && !it.top && !it.start ? "추후 공개" : won(p); flashIfChanged(pe, "l:" + it.id, p);
+    pe.textContent = s.pre ? (wishOpen() ? "희망가 받는 중" : "곧 시작해요") : won(p);
+    pe.classList.toggle("pre", s.pre);
+    if (!s.pre) flashIfChanged(pe, "l:" + it.id, p);
     $(".cnt", c).textContent = s.pre ? `관심 ${it.wishCount}명` : `입찰 ${it.bidCount}건`;
     const cd = $(".cd", c); cd.dataset.end = it.endAt; updateCd(cd);
     $(".tagslot", c).innerHTML = s.pre ? (s.myWish ? `<span class="mine">내 희망가 ${won(s.myWish)}</span>` : "") : s.mineTop ? `<span class="mine">${s.closed ? "내가 낙찰" : "내가 최고가"}</span>` : s.mineIn && !s.closed ? `<span class="mine out">더 높은 입찰 발생</span>` : "";
@@ -192,11 +236,29 @@ function flashIfChanged(el, key, v) {
   if (S.prevPrice[key] != null && S.prevPrice[key] !== v) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
   S.prevPrice[key] = v;
 }
+function renderNotice() {
+  const el = $("#notice"); if (!el) return;
+  const text = (S.notice || "").trim();
+  let hidden = false; try { hidden = sessionStorage.getItem("notice.hide") === text; } catch (e) {}
+  if (!text) { el.innerHTML = ""; return; }
+  if (el.dataset.text === text + hidden) return;
+  el.dataset.text = text + hidden;
+  if (hidden) { el.innerHTML = `<button class="notice-open">입찰 안내 보기</button>`; $(".notice-open", el).onclick = () => { try { sessionStorage.removeItem("notice.hide"); } catch (e) {} el.dataset.text = ""; renderNotice(); }; return; }
+  el.innerHTML = `<div class="notice"><div class="nt-h"><b>입찰 안내</b><button class="nt-x" aria-label="접기">접기</button></div><ul></ul></div>`;
+  const ul = $("ul", el);
+  text.split("\n").map((l) => l.trim()).filter(Boolean).forEach((l) => {
+    const li = document.createElement("li");
+    // 한 줄에 문장이 여러 개면 문장마다 줄을 나눠 읽기 쉽게
+    l.replace(/^[-•·]\s*/, "").split(/(?<=[.?!])\s+(?=\S)/).forEach((sent, i) => { if (i) li.appendChild(document.createElement("br")); li.appendChild(document.createTextNode(sent)); });
+    ul.appendChild(li);
+  });
+  $(".nt-x", el).onclick = () => { try { sessionStorage.setItem("notice.hide", text); } catch (e) {} el.dataset.text = ""; renderNotice(); };
+}
 function schedBanner() {
   const sc = S.schedule;
   if (!sc.startAt) return "";
   if (started()) return "";
-  return `<div class="sched"><div><b>${wishOpen() ? "🎁 지금은 희망가 접수 기간이에요" : "⏳ 희망가 접수가 끝났어요"}</b><span>${wishOpen() ? `갖고 싶은 물품에 희망가를 남겨 주세요. 금액은 다른 사람에게 공개되지 않아요.${sc.wishEndAt ? ` · 접수 마감 ${fmtDTfull(sc.wishEndAt)}` : ""}` : "경매가 시작되면 바로 입찰할 수 있어요."}</span></div>
+  return `<div class="sched"><div><b>${wishOpen() ? "🎁 지금은 희망가 접수 기간이에요" : "⏳ 희망가 접수가 끝났어요"}</b><span>${wishOpen() ? `갖고 싶은 물품에 희망가를 남겨 주세요.<br>금액은 다른 사람에게 공개되지 않아요.${sc.wishEndAt ? ` · 접수 마감 ${fmtDTfull(sc.wishEndAt)}` : ""}` : "경매가 시작되면 바로 입찰할 수 있어요."}</span></div>
     <div class="sched-r"><span>경매 시작</span><b>${fmtDTfull(sc.startAt)}</b><span class="cd" data-start="${sc.startAt}"></span></div></div>`;
 }
 function updateCd(el) {
@@ -246,7 +308,7 @@ function renderItem(app, id) {
           <div class="plabel" id="dplabel"></div>
           <div class="dprice price" id="dprice"></div>
           <dl class="kv"><dt id="dstartRow">경매 시작</dt><dd id="dstartRow2"><b id="dstartAt"></b></dd><dt>시작가</dt><dd id="dstart"></dd><dt>마감</dt><dd id="dend"></dd><dt id="cdLabel">남은 시간</dt><dd><span class="cd" id="dcd"></span></dd></dl>
-          <div class="note red hidden" id="extNote" style="margin:0 0 10px">🔥 <b>연장전!</b> 마감 직전 입찰이 들어와 시간이 늘어났어요. ${S.schedule.extendSeconds || 30}초 동안 새 입찰이 없으면 끝나요.</div>
+          <div class="note red hidden" id="extNote" style="margin:0 0 10px">🔥 <b>연장전!</b><br>마감 직전 입찰이 들어와 시간이 늘어났어요.<br>${S.schedule.extendSeconds || 30}초 동안 새 입찰이 없으면 끝나요.</div>
           <div id="bidArea"></div>
         </div>
         <div class="hist"><h3>입찰 현황 <span id="hcount" style="color:var(--muted);font-weight:400"></span></h3><ol id="hist"></ol></div>
@@ -282,6 +344,9 @@ function renderItem(app, id) {
   $("#cdLabel").textContent = s.pre ? "시작까지" : "남은 시간";
   if (s.pre) { cd.dataset.start = S.schedule.startAt; updateCd(cd); } else delete cd.dataset.start;
   $("#extNote").classList.toggle("hidden", !(it.extended && !s.closed));
+  // 경매 시작 전: 시작가가 희망가에 영향을 주지 않도록 가격 정보는 숨기고 희망가 박스만 보여 줌
+  ["#dplabel", "#dprice"].forEach((q) => $(q).classList.toggle("hidden", s.pre));
+  $("#bidPanel dl.kv").classList.toggle("hidden", s.pre);
 
   const bids = S.detail && S.detail.item?.id === id ? S.detail.bids : null;
   $(".hist h3").firstChild.textContent = s.pre ? "관심 현황 " : "입찰 현황 ";
@@ -312,7 +377,7 @@ function renderItem(app, id) {
   if (area.dataset.mode !== rsig) {
     area.dataset.mode = rsig;
     area.innerHTML = `<div id="mystate"></div>
-      <div class="tapnote">버튼을 누르면 <b>바로 입찰</b>돼요 (취소 불가)</div>
+      <div class="tapnote">버튼을 누르면 <b>바로 입찰</b>돼요.<br>실수로 누르셨다면 마감 전에 담당자에게 알려 주세요.</div>
       <button class="btn tapfirst hidden" id="tapStart"></button>
       <div class="taps" id="taps">${RAISES.map((r) => `<button class="tap" data-r="${r}"><b>${raiseLabel(r)}</b></button>`).join("")}</div>
       <div class="msg" id="bmsg"></div>`;
@@ -331,7 +396,7 @@ function renderItem(app, id) {
   });
   fs.disabled = S.busy || s.mineTop;
   if (!s.mineTop && $("#bmsg").classList.contains("ok")) { $("#bmsg").className = "msg"; $("#bmsg").textContent = ""; }
-  $("#mystate").innerHTML = s.mineTop ? `<div class="note" style="margin-top:0">현재 회원님이 최고가 입찰자입니다. 다른 분이 올리면 다시 입찰할 수 있어요.</div>`
+  $("#mystate").innerHTML = s.mineTop ? `<div class="note" style="margin-top:0">현재 회원님이 최고가 입찰자입니다.<br>다른 분이 올리면 다시 입찰할 수 있어요.</div>`
     : s.mineIn ? `<div class="note red" style="margin-top:0">다른 분이 더 높은 금액으로 입찰했습니다!</div>` : "";
 }
 
@@ -376,7 +441,7 @@ function renderWish(area, it, s) {
   }
   area.innerHTML = `<div class="wishbox">
     <b>🎁 희망가 남기기</b>
-    <p>이 물품, 얼마면 사고 싶으세요? 남긴 금액은 <b>다른 사람에게 공개되지 않고</b> 경매 시작가를 정하는 데 참고만 해요. 구매 약속이 아니니 부담 없이 남겨 주세요.</p>
+    <p>이 물품, 얼마면 사고 싶으세요?<br>남긴 금액은 <b>다른 사람에게 공개되지 않고</b><br>경매 시작가를 정하는 데 참고만 해요.<br>구매 약속이 아니니 부담 없이 남겨 주세요.</p>
     ${s.myWish ? `<div class="mywish">내 희망가 <b>${won(s.myWish)}</b></div>` : ""}
     <div class="bidbox"><input id="wamt" inputmode="numeric" autocomplete="off" placeholder="예) 30,000" aria-label="희망가" value="${s.myWish ? Number(s.myWish).toLocaleString("ko-KR") : ""}"><button class="btn" id="wbtn">${s.myWish ? "수정하기" : "남기기"}</button></div>
     ${s.myWish ? `<button class="btn ghost sm" id="wdel" style="margin-top:8px">희망가 취소</button>` : ""}
@@ -408,7 +473,8 @@ async function doBid(id, amount) {
   } catch (e) {
     msg.className = "msg err";
     // 그 사이 다른 사람이 먼저 올린 경우: 보던 가격보다 높게 자동으로 넣지 않고 다시 누르게 함
-    msg.textContent = e.data?.code === "low" ? `그 사이 다른 입찰이 먼저 들어왔어요. 현재가를 확인하고 다시 눌러 주세요.` : e.message;
+    msg.textContent = e.data?.code === "same_amount" ? e.message
+      : e.data?.code === "low" ? `그 사이 다른 분이 더 높게 입찰했어요.\n바뀐 현재가를 확인하고 다시 눌러 주세요.` : e.message;
   } finally {
     S.busy = false; render();
   }
