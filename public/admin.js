@@ -238,7 +238,7 @@ function renderResults() {
   const its = A.ov.items;
   const lastSms = {}; for (const s of A.ov.sms) if (!lastSms[s.item_id] && s.kind !== "test") lastSms[s.item_id] = s;
   $("#abody").innerHTML = `
-  <div class="row" style="margin-bottom:10px"><button class="btn sm" id="dlW">낙찰 결과 엑셀(CSV) 받기</button><button class="btn ghost sm" id="dlB">전체 입찰 내역 CSV 받기</button><button class="btn ghost sm" id="cpP">낙찰자 번호 복사</button></div>
+  <div class="row" style="margin-bottom:10px"><button class="btn sm" id="dlW">낙찰 결과 엑셀(CSV) 받기</button><button class="btn ghost sm" id="dlB">전체 입찰 내역 CSV 받기</button><button class="btn ghost sm" id="dlP">참여자 명단 CSV 받기</button><button class="btn ghost sm" id="cpP">낙찰자 번호 복사</button></div>
   <div class="tscroll"><table class="t"><thead><tr><th>No.</th><th>물품명</th><th>상태</th><th>낙찰가 / 현재가</th><th>사번</th><th>연락처</th><th>입찰</th><th>문자</th><th></th></tr></thead><tbody>
   ${its.map((it) => { const w = it.winner, l = it.leader, s = lastSms[it.id]; return `<tr>
     <td class="num"><b>${esc(it.no)}</b></td><td>${esc(it.name)}</td>
@@ -253,10 +253,10 @@ function renderResults() {
   const dl = async (type) => {
     try {
       const blob = await api("/api/admin/export.csv?type=" + type);
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `경매_${type === "bids" ? "입찰내역" : "낙찰결과"}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `경매_${{ bids: "입찰내역", participants: "참여자명단" }[type] || "낙찰결과"}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     } catch (e) { toast(e.message); }
   };
-  $("#dlW").onclick = () => dl("winners"); $("#dlB").onclick = () => dl("bids");
+  $("#dlW").onclick = () => dl("winners"); $("#dlB").onclick = () => dl("bids"); $("#dlP").onclick = () => dl("participants");
   $("#cpP").onclick = async () => {
     const t = its.filter((i) => i.winner && i.winner.phone).map((i) => i.winner.phone).join(", ");
     if (!t) return toast("낙찰자 번호가 없습니다");
@@ -319,7 +319,7 @@ function buildData() {
     <p style="font-size:14px;color:#3a433d;margin:0 0 12px">물품, 사진, 입찰, 문자 기록을 모두 지웁니다. 테스트를 마치고 실제 행사를 시작하기 전에 사용하세요.</p>
     <button class="btn red sm" id="reset">전체 초기화</button></div>`;
   $("#purge").onclick = async () => {
-    if (!(await modal({ title: "휴대폰 번호 전체 삭제", body: "모든 참여자의 휴대폰 번호를 삭제합니다.\n되돌릴 수 없습니다. 먼저 ‘낙찰 결과’에서 CSV를 받아 두세요.", ok: "삭제", danger: true }))) return;
+    if (!(await modal({ title: "휴대폰 번호 전체 삭제", body: "모든 참여자의 휴대폰 번호를 삭제합니다.\n되돌릴 수 없습니다. 먼저 ‘낙찰 결과’에서 낙찰 결과·참여자 명단 CSV를 받아 두세요.", ok: "삭제", danger: true }))) return;
     try { await api("/api/admin/purge-personal", { method: "POST" }); toast("삭제되었습니다"); await load(); refresh(); } catch (e) { toast(e.message); }
   };
   $("#reset").onclick = async () => {
