@@ -96,7 +96,7 @@ function outbidAlert(it) {
   a.className = "alert"; a.dataset.id = it.id;
   a.innerHTML = `<div class="al-body"><b>누군가 더 높게 불렀어요!</b><span class="al-item"></span><span class="al-meta"></span></div>
     <div class="al-btns">${viewing ? "" : `<button class="btn sm" data-go>바로 가기</button>`}<button class="al-x" aria-label="닫기">✕</button></div>`;
-  $(".al-item", a).textContent = `No.${it.no} ${it.name}`;
+  $(".al-item", a).textContent = it.name;
   const meta = $(".al-meta", a);
   const upd = () => { const l = it.endAt - now(); meta.textContent = `현재 ${won(it.top.amount)} · ${l > 0 ? countdown(l) + " 남음" : "마감"}`; };
   upd(); const t = setInterval(upd, 1000);
@@ -209,7 +209,7 @@ function renderList(app) {
   if (grid.dataset.sig !== sig) {
     grid.dataset.sig = sig;
     grid.innerHTML = shown.map(([it]) => `<button class="card" data-id="${esc(it.id)}">
-      <div class="thumb">${imgUrl(it) ? `<img alt="" loading="lazy" src="${imgUrl(it)}">` : GIFT_PH}<span class="no">No.${esc(it.no)}</span><span class="bslot"></span><div class="stamp hidden"><span></span></div></div>
+      <div class="thumb">${imgUrl(it) ? `<img alt="" loading="lazy" src="${imgUrl(it)}">` : GIFT_PH}<span class="bslot"></span><div class="stamp hidden"><span></span></div></div>
       <div class="cbody"><div class="cname"></div><div class="tagslot"></div>
       <div class="prow"><div><div class="plabel"></div><div class="price"></div></div></div>
       <div class="meta"><span class="cnt"></span><span class="cd"></span></div></div></button>`).join("");
@@ -303,7 +303,7 @@ function renderItem(app, id) {
     app.dataset.view = view;
     app.innerHTML = `<div class="wrap"><button class="back" id="back">← 전체 목록</button>
     <div class="pdp">
-      <div class="pdp-thumb"><div class="dimg">${imgUrl(it) ? `<img alt="" src="${imgUrl(it)}">` : GIFT_PH}<span class="no">No.${esc(it.no)}</span><span class="bslot"></span></div></div>
+      <div class="pdp-thumb"><div class="dimg">${imgUrl(it) ? `<img alt="" src="${imgUrl(it)}">` : GIFT_PH}<span class="bslot"></span></div></div>
       <aside class="pdp-aside" id="aside">
         <div class="dtitle" id="dname"></div>
         <div style="color:var(--muted);font-size:13px" id="ddonor"></div>
