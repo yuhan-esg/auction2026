@@ -354,7 +354,7 @@ function renderItem(app, id) {
   const bids = S.detail && S.detail.item?.id === id ? S.detail.bids : null;
   $(".hist h3").firstChild.textContent = s.pre ? "관심 현황 " : "입찰 현황 ";
   $("#hcount").textContent = s.pre ? "" : bids ? `${bids.length}건` : "";
-  if (s.pre && !(bids && bids.length)) {
+  if (s.pre) { // 경매 시작 전에는 입찰 기록이 있어도 금액을 보여 주지 않고 관심 인원만
     $("#hist").innerHTML = `<li class="empty">${it.wishCount ? `<b>${it.wishCount}명</b>이 이 물품에 희망가를 남겼어요 👀` : "아직 희망가를 남긴 사람이 없어요."}</li>`;
   } else
   $("#hist").innerHTML = !bids ? `<li class="empty">불러오는 중…</li>` : bids.length
