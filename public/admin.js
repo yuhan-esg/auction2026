@@ -1,4 +1,4 @@
-import { $, $$, esc, won, fmtDT, fmtDTs, fmtDTfull, toLocalInput, digits, toast, modal, moneyInput, imgUrl, connectLive } from "./common.js";
+import { $, $$, esc, won, fmtDT, fmtDTs, fmtDTfull, toLocalInput, digits, toast, modal, moneyInput, imgUrl, connectLive, applyFavicon } from "./common.js";
 
 // 참여자 화면과 같은 로그인 정보를 씁니다 (같은 기기라면 한 번만 로그인)
 const LS = "auction.session.v1";
@@ -52,7 +52,7 @@ function start() {
   });
   setInterval(() => $$(".cd[data-end]").forEach((el) => { const l = Number(el.dataset.end) - Date.now(); el.textContent = l > 0 ? "진행중" : "종료"; }), 1000);
 }
-async function load() { A.ov = await api("/api/admin/overview"); document.title = `${A.ov.eventName} · 관리자`; }
+async function load() { A.ov = await api("/api/admin/overview"); document.title = `${A.ov.eventName} · 관리자`; applyFavicon(A.ov.faviconVer && A.ov.hasFavicon ? A.ov.faviconVer : 0); }
 
 /* ---------------- shell ---------------- */
 const TABS = [["items", "물품 관리"], ["results", "낙찰 결과"], ["sms", "문자 발송"], ["data", "데이터 관리"]];
@@ -88,7 +88,10 @@ function buildItems() {
   $("#abody").innerHTML = `
   <div class="panel" style="margin-bottom:16px"><h3 style="margin:0 0 4px">경매 일정</h3>
     <p style="font-size:13px;color:var(--muted);margin:0 0 6px">경매 시작 전까지는 입찰이 막히고 <b>희망가 접수</b>만 받아요. 시작 시각을 비워 두면 바로 입찰할 수 있어요.</p>
-    <div><label class="f" for="s_name" style="margin-top:4px">행사 이름 <span style="font-weight:400;color:var(--muted)">(브라우저 탭, 화면 제목, 문자의 {행사명}에 쓰여요)</span></label><input class="t" id="s_name" maxlength="40" value="${esc(A.ov.eventName)}" style="max-width:420px"></div>
+    <div class="row" style="align-items:flex-end;gap:18px">
+      <div style="flex:1;min-width:260px"><label class="f" for="s_name" style="margin-top:4px">행사 이름 <span style="font-weight:400;color:var(--muted)">(브라우저 탭, 화면 제목, 문자의 {행사명}에 쓰여요)</span></label><input class="t" id="s_name" maxlength="40" value="${esc(A.ov.eventName)}"></div>
+      <div><label class="f">탭 아이콘</label><div class="row"><img id="s_icon" src="${A.ov.hasFavicon ? `/api/favicon?v=${A.ov.faviconVer}` : "/favicon.svg"}" alt="" style="width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:#fff"><label class="btn ghost sm" style="cursor:pointer">이미지 바꾸기<input type="file" id="s_iconf" accept="image/*" hidden></label>${A.ov.hasFavicon ? `<button class="btn ghost sm" id="s_iconx">기본 아이콘으로</button>` : ""}</div></div>
+    </div>
     <div class="formgrid" style="grid-template-columns:1fr 1fr 1fr">
       <div><label class="f" for="s_wish">희망가 접수 마감 <span style="font-weight:400;color:var(--muted)">(비우면 시작 전까지)</span></label><input class="t" type="datetime-local" id="s_wish" value="${sc.wishEndAt ? toLocalInput(sc.wishEndAt) : ""}"></div>
       <div><label class="f" for="s_start">경매 시작 시각</label><input class="t" type="datetime-local" id="s_start" value="${sc.startAt ? toLocalInput(sc.startAt) : ""}"></div>
@@ -118,6 +121,15 @@ function buildItems() {
       <div class="row"><input class="t" type="datetime-local" id="bulkEnd" style="width:auto;padding:6px 9px;font-size:13px"><button class="btn ghost sm" id="bulkBtn">전체 종료 시각 일괄 변경</button></div></div>
     <div class="tscroll"><table class="t"><thead><tr><th>No.</th><th>사진</th><th>물품명</th><th>희망가</th><th>시작가</th><th>현재가</th><th>입찰</th><th>종료</th><th>상태</th><th></th></tr></thead><tbody id="itbody"></tbody></table></div>
   </div>`);
+  $("#s_iconf").addEventListener("change", async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const url = await new Promise((res, rej) => { const img = new Image(), u = URL.createObjectURL(f); img.onload = () => { const c = document.createElement("canvas"); c.width = c.height = 128; const g = c.getContext("2d"); const s = Math.min(img.width, img.height); g.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 128, 128); URL.revokeObjectURL(u); res(c.toDataURL("image/png")); }; img.onerror = rej; img.src = u; });
+      await api("/api/admin/schedule", { method: "PUT", body: JSON.stringify({ favicon: url }) });
+      toast("탭 아이콘을 바꿨어요"); await load(); renderShell();
+    } catch (er) { toast("아이콘을 바꾸지 못했어요"); }
+  });
+  if ($("#s_iconx")) $("#s_iconx").onclick = async () => { await api("/api/admin/schedule", { method: "PUT", body: JSON.stringify({ favicon: "" }) }); toast("기본 아이콘으로 돌렸어요"); await load(); renderShell(); };
   const ext = $("#s_ext");
   const desc = () => { const n = Number(digits(ext.value)) || 0; $("#s_desc").textContent = n ? `마감 ${n}초 안에 입찰이 들어오면 남은 시간을 ${n}초로 다시 맞춥니다. 횟수 제한 없이, 마지막 입찰 뒤 ${n}초 동안 아무도 안 부르면 끝나요.` : "연장을 끕니다. 정해진 마감 시각에 바로 끝나요."; };
   ext.addEventListener("input", () => { ext.value = digits(ext.value).slice(0, 3); desc(); }); desc();

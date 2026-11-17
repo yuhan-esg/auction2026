@@ -42,6 +42,11 @@ export function modal({ title, body, ok = "확인", cancel = "취소", danger = 
   });
 }
 export const GIFT_PH = `<div class="ph"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="18" width="34" height="23" rx="2"/><rect x="5" y="12" width="38" height="7" rx="1.5"/><path d="M24 12v29M24 12c-3-6-11-7-11-2s8 2 11 2c3 0 11 3 11-2s-8-4-11 2"/></svg>사진 준비중</div>`;
+export function applyFavicon(ver) {
+  const el = document.getElementById("favicon"); if (!el) return;
+  const href = ver ? `/api/favicon?v=${ver}` : "/favicon.svg";
+  if (el.getAttribute("href") !== href) { el.setAttribute("href", href); el.setAttribute("type", ver ? "image/png" : "image/svg+xml"); }
+}
 export const imgUrl = (it) => (it.imgVer > 0 ? `/api/img/${encodeURIComponent(it.id)}?v=${it.imgVer}` : "");
 
 // 실시간 연결 (WebSocket, 끊기면 자동 재연결 + 20초마다 보조 새로고침)

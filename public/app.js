@@ -1,4 +1,4 @@
-import { $, $$, esc, won, fmtDT, fmtDTs, fmtDTfull, countdown, digits, toast, modal, GIFT_PH, imgUrl, connectLive } from "./common.js";
+import { $, $$, esc, won, fmtDT, fmtDTs, fmtDTfull, countdown, digits, toast, modal, GIFT_PH, imgUrl, connectLive, applyFavicon } from "./common.js";
 
 const LS = "auction.session.v1";
 const S = {
@@ -44,6 +44,7 @@ async function boot() {
       S.offset = d.now - Date.now();
       S.items = d.items; S.loaded = true;
       if (d.schedule) S.schedule = d.schedule;
+      applyFavicon(d.faviconVer);
       if (d.eventName && d.eventName !== S.event) { S.event = d.eventName; $("#eventName").textContent = d.eventName; document.title = d.eventName; }
       if (S.detailId) loadDetail(S.detailId);
       render();
@@ -149,7 +150,7 @@ function renderList(app) {
   const total = rows.reduce((a, [it]) => a + (it.top ? it.top.amount : 0), 0);
   const bids = rows.reduce((a, [it]) => a + it.bidCount, 0);
   const myTop = rows.filter(([, s]) => s.mineTop).length;
-  $("#stats").innerHTML = `<div class="stat"><b>${S.items.length}</b><span>전체 물품</span></div>${started() ? `<div class="stat"><b>${live}</b><span>진행중</span></div>` : `<div class="stat"><b>${rows.filter(([, s]) => s.myWish).length}</b><span>내가 희망가 남긴 물품</span></div>`}<div class="stat"><b>${bids}</b><span>총 입찰</span></div><div class="stat"><b>${total.toLocaleString("ko-KR")}</b><span>현재 모금액(원)</span></div>${myTop ? `<div class="stat hl"><b>${myTop}</b><span>내가 최고가인 물품</span></div>` : ""}`;
+  $("#stats").innerHTML = `<div class="stat"><b>${S.items.length}</b><span>전체 물품</span></div>${started() ? `<div class="stat"><b>${live}</b><span>진행중</span></div>` : `<div class="stat"><b>${rows.filter(([, s]) => s.myWish).length}</b><span>내가 희망가 남긴 물품</span></div>`}${S.me?.isAdmin ? `<div class="stat"><b>${bids}</b><span>총 입찰</span></div>` : ""}<div class="stat"><b>${total.toLocaleString("ko-KR")}</b><span>현재 모금액(원)</span></div>${myTop ? `<div class="stat hl"><b>${myTop}</b><span>내가 최고가인 물품</span></div>` : ""}`;
   const F = started() ? [["all", "전체"], ["live", "진행중"], ["mine", "내 입찰"], ["done", "종료"]] : [["all", "전체"], ["mine", "내 희망가"]];
   $("#filters").innerHTML = F.map(([k, l]) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${l}</button>`).join("");
   $$("#filters button").forEach((b) => (b.onclick = () => { S.filter = b.dataset.f; renderList(app); }));

@@ -180,7 +180,9 @@ table.t td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .wishbox{background:#fdf6e3;border:1px solid #efd9a3;border-radius:12px;padding:14px;margin-top:4px}
 .wishbox p{font-size:13px;color:#6b5414;margin:6px 0 4px}
 .mywish{font-size:14px;margin:8px 0 0}
-html{overflow-y:scroll;scrollbar-gutter:stable}
+/* 스크롤은 되지만 막대는 안 보이게 (막대가 없으니 화면 쏠림도 없음) */
+html,body,.pdp-aside,.hist ol,.tscroll{scrollbar-width:none;-ms-overflow-style:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar,.pdp-aside::-webkit-scrollbar,.hist ol::-webkit-scrollbar,.tscroll::-webkit-scrollbar{display:none;width:0;height:0}
 .tapnote{font-size:12.5px;color:var(--muted);margin:2px 0 8px}
 .tapfirst{width:100%;margin-bottom:8px;padding:13px;font-size:16px}
 .taps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}

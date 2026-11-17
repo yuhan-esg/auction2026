@@ -134,7 +134,7 @@ export class Auction extends DurableObject {
   items() { return this.all(`SELECT * FROM items ORDER BY no ASC`); }
   state() {
     const now = Date.now();
-    return { now, eventName: this.eventName(), schedule: this.schedule(now), items: this.items().map((it) => this.summary(it, now)) };
+    return { now, eventName: this.eventName(), faviconVer: int(this.getSetting("favicon_ver")) || 0, schedule: this.schedule(now), items: this.items().map((it) => this.summary(it, now)) };
   }
 
   /* ---------------- realtime ---------------- */
@@ -253,6 +253,11 @@ export class Auction extends DurableObject {
     if ((mm = p.match(/^\/api\/items\/([\w-]+)$/)) && m === "GET") return this.itemDetail(mm[1]);
     if ((mm = p.match(/^\/api\/img\/([\w-]+)$/)) && m === "GET") return this.image(mm[1]);
     if ((mm = p.match(/^\/api\/photo\/(\d+)$/)) && m === "GET") return this.photo(int(mm[1]));
+    if (p === "/api/favicon" && m === "GET") {
+      const f = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(this.getSetting("favicon") || "");
+      if (!f) return new Response(null, { status: 302, headers: { location: "/favicon.svg" } });
+      return new Response(Uint8Array.from(atob(f[2]), (c) => c.charCodeAt(0)), { headers: { "content-type": f[1], "cache-control": "public, max-age=31536000, immutable" } });
+    }
 
     if (p.startsWith("/api/admin/")) {
       const s = this.session(request);
@@ -387,7 +392,7 @@ export class Auction extends DurableObject {
     const sms = this.all(`SELECT * FROM sms_log ORDER BY id DESC LIMIT 200`).map((r) => ({ ...r, to_phone: fmtPhone(r.to_phone) }));
     const stats = this.first(`SELECT COUNT(*) AS bids, COUNT(DISTINCT pid) AS bidders FROM bids`);
     const sessions = this.first(`SELECT COUNT(DISTINCT emp) AS c FROM sessions`).c;
-    return { now, eventName: this.eventName(), smsMode: smsMode(this.env), template: this.template(), defaultTemplate: DEFAULT_TEMPLATE,
+    return { now, eventName: this.eventName(), faviconVer: int(this.getSetting("favicon_ver")) || 0, hasFavicon: !!this.getSetting("favicon"), smsMode: smsMode(this.env), template: this.template(), defaultTemplate: DEFAULT_TEMPLATE,
       antiSnipeSeconds: this.antiSnipeMs() / 1000, schedule: this.schedule(now), items, sms, stats: { ...stats, participants: sessions } };
   }
 
@@ -480,6 +485,12 @@ export class Auction extends DurableObject {
         const put = (k, v) => (v ? this.setSetting(k, int(v)) : this.run(`DELETE FROM settings WHERE key=?`, k));
         if ("startAt" in b) put("start_at", b.startAt);
         if ("wishEndAt" in b) put("wish_end_at", b.wishEndAt);
+        if (typeof b.favicon === "string") {
+          if (!b.favicon) this.run(`DELETE FROM settings WHERE key='favicon'`);
+          else if (/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(b.favicon) && b.favicon.length < 200000) this.setSetting("favicon", b.favicon);
+          else return err(400, "아이콘 이미지 형식이 올바르지 않습니다.");
+          this.setSetting("favicon_ver", (int(this.getSetting("favicon_ver")) || 0) + 1);
+        }
         if (typeof b.eventName === "string") { const n = b.eventName.trim().slice(0, 40); n ? this.setSetting("event_name", n) : this.run(`DELETE FROM settings WHERE key='event_name'`); }
         if ("extendSeconds" in b) { const v = Math.max(0, Math.min(600, int(b.extendSeconds) || 0)); this.setSetting("extend_seconds", v); }
         this.broadcast();
