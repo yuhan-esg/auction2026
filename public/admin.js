@@ -109,8 +109,8 @@ function buildItems() {
   $("#abody").insertAdjacentHTML("beforeend", `
   <div class="panel" id="formPanel"><h3 style="margin:0 0 6px" id="ftitle">물품 등록</h3>
     <form id="ifm" class="formgrid" novalidate>
-      <div><label class="f" for="f_no">번호</label><input class="t" id="f_no" inputmode="numeric"></div>
-      <div><label class="f" for="f_name">물품명</label><input class="t" id="f_name" maxlength="100"></div>
+      <input type="hidden" id="f_no">
+      <div class="full"><label class="f" for="f_name">물품명</label><input class="t" id="f_name" maxlength="100"></div>
       <div><label class="f" for="f_start">시작가 (원) <span style="font-weight:400;color:var(--muted)">0 = 추후 공개</span></label><input class="t" id="f_start" inputmode="numeric"></div>
       <div><label class="f" for="f_r0">입찰 버튼 금액 4개 (원) <span style="font-weight:400;color:var(--muted)">누르면 현재가에 이만큼 더해서 바로 입찰</span></label>
         <div class="raisegrid">${[0, 1, 2, 3].map((i) => `<div><input class="t" id="f_r${i}" inputmode="numeric" aria-label="버튼 ${i + 1}"><span class="rprev" id="f_rp${i}"></span></div>`).join("")}</div>
@@ -231,14 +231,14 @@ async function editItem(id) {
   }).catch(() => {});
   $("#f_no").value = it.no; $("#f_name").value = it.name; $("#f_start").value = Number(it.start).toLocaleString("ko-KR"); setRaises(it.raises);
   $("#f_end").value = toLocalInput(it.endAt); $("#f_donor").value = it.donor || ""; $("#f_desc").value = it.description || ""; showPrev(A.form.img);
-  $("#ftitle").textContent = `No.${it.no} 수정`; $("#f_save").textContent = "저장하기"; $("#f_cancel").classList.remove("hidden"); setMsg("");
+  $("#ftitle").textContent = "물품 수정"; $("#f_save").textContent = "저장하기"; $("#f_cancel").classList.remove("hidden"); setMsg("");
   $("#formPanel").scrollIntoView({ behavior: "smooth" });
 }
 async function saveItem(e) {
   e.preventDefault();
   const n = (id) => Number(digits($("#" + id).value));
   const data = { no: n("f_no"), name: $("#f_name").value.trim(), start: n("f_start"), raises: [0, 1, 2, 3].map((i) => n("f_r" + i)), endAt: new Date($("#f_end").value).getTime(), donor: $("#f_donor").value.trim(), description: $("#f_desc").value.trim() };
-  if (!data.no) return setMsg("번호를 입력해 주세요.", true);
+  if (!data.no) data.no = nextNo(); // 번호는 화면에 보이지 않고 등록 순서대로 자동으로 붙음
   if (!data.name) return setMsg("물품명을 입력해 주세요.", true);
   if (data.raises.some((x) => !x)) return setMsg("입찰 버튼 금액 4개를 모두 입력해 주세요.", true);
   if (!data.endAt) return setMsg("종료 시각을 입력해 주세요.", true);
@@ -252,7 +252,11 @@ async function saveItem(e) {
   try {
     let id = editing;
     if (editing) await api("/api/admin/items/" + editing, { method: "PUT", body: JSON.stringify(data) });
-    else id = (await api("/api/admin/items", { method: "POST", body: JSON.stringify(data) })).id;
+    else for (let k = 0; ; k++) { // 다른 관리자와 번호가 겹치면 최신 목록을 받아 다음 번호로 자동 재시도
+      data.no = nextNo();
+      try { id = (await api("/api/admin/items", { method: "POST", body: JSON.stringify(data) })).id; break; }
+      catch (er) { if (er.status !== 409 || k >= 2) throw er; await load(); }
+    }
     if (A.form.imgChanged) {
       if (A.form.img) await api(`/api/admin/items/${id}/image`, { method: "PUT", body: JSON.stringify({ dataUrl: A.form.img }) });
       else if (editing) await api(`/api/admin/items/${id}/image`, { method: "DELETE" });
@@ -405,7 +409,7 @@ function buildSms() {
   <div class="detail" style="grid-template-columns:1.15fr 1fr;padding-bottom:0">
     <div class="panel"><h3 style="margin:0 0 4px">낙찰 안내 문구 (모든 낙찰자 공통)</h3>
       <p style="font-size:13px;color:var(--muted);margin:0 0 8px">버튼을 누르면 커서 위치에 자동입력 칸이 들어갑니다.<br>실제 문자에서는 물품마다 값이 바뀌어요.</p>
-      <div class="row" id="vars">${[["{물품명}", "물품 이름"], ["{낙찰가}", "낙찰 금액"], ["{번호}", "물품 번호"], ["{사번}", "낙찰자 사번"], ["{행사명}", "행사 이름"]].map(([v, l]) => `<button class="chip" data-v="${v}" title="${l}">${v} <span style="color:var(--muted);font-size:11px">${l}</span></button>`).join("")}</div>
+      <div class="row" id="vars">${[["{물품명}", "물품 이름"], ["{낙찰가}", "낙찰 금액"], ["{사번}", "낙찰자 사번"], ["{행사명}", "행사 이름"]].map(([v, l]) => `<button class="chip" data-v="${v}" title="${l}">${v} <span style="color:var(--muted);font-size:11px">${l}</span></button>`).join("")}</div>
       <textarea class="t" id="tpl" rows="6" style="margin-top:10px">${esc(ov.template)}</textarea>
       <div class="row" style="margin-top:10px"><button class="btn sm" id="tplSave">문구 저장</button><button class="btn ghost sm" id="tplReset">기본 문구로</button><span class="msg" id="tplMsg"></span></div>
     </div>

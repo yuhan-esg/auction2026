@@ -111,7 +111,7 @@ test("입찰 규칙: 최소가, 최고가 중복, 종료 후 차단, 낙찰 + �
   assert.equal(ov.sms.length, 1);
   assert.equal(ov.sms[0].status, "preview", "테스트 모드에서는 보내지 않음");
   assert.equal(ov.sms[0].to_phone, "010-3333-4444");
-  assert.match(ov.sms[0].text, /No\.1 스피커.*15,000원/);
+  assert.match(ov.sms[0].text, /스피커 물품이 15,000원/);
   assert.equal(ctx.alarmAt, null, "남은 경매 없으면 알람 해제");
   await d.alarm();
   assert.equal((await admin("GET", "/overview")).body.sms.length, 1, "알람이 두 번 울려도 문자는 한 번");
@@ -153,6 +153,9 @@ test("관리자: 입찰 취소, CSV, 개인정보 삭제, 문구 미리보기", 
   assert.equal((await admin("GET", "/overview")).body.items[0].bidCount, 0);
   await sleep(1001);
   assert.equal((await a("POST", "/api/bid", { itemId: id, amount: 1000 })).status, 200);
+  const part = (await admin("GET", "/export.csv?type=participants")).body;
+  assert.match(part, /"500001","010-5555-6666",.*,"1","0",""/);
+  assert.match(part, /"170962","010-4623-3945",.*"O"/);
   const csv = (await admin("GET", "/export.csv?type=bids")).body;
   assert.match(csv, /500001/);
   await admin("POST", "/purge-personal");
@@ -170,4 +173,165 @@ test("live 모드라도 솔라피 설정이 없으면 보내지 않고 실패로
   await sleep(450); await d.alarm();
   const s = (await admin("GET", "/overview")).body.sms[0];
   assert.equal(s.status, "failed"); assert.match(s.detail, /SOLAPI_API_KEY/);
+});
+
+test("샘플 물품: 개수·상태 골라 넣기, 자동 낙찰, 문자는 실제 발송 안 함, 샘플만 삭제", async () => {
+  let fetched = 0;
+  const realFetch = globalThis.fetch; globalThis.fetch = async (...a) => { fetched++; return realFetch(...a); };
+  try {
+    const { admin, call, d } = setup({ ...env, SMS_MODE: "live", SOLAPI_API_KEY: "k", SOLAPI_API_SECRET: "s", SMS_FROM: "0212345678" });
+    await admin("POST", "/items", { no: 1, name: "진짜 물품", start: 1000, step: 100, endAt: Date.now() + 60000 });
+    const r = await admin("POST", "/samples", { count: 6, status: "mix" });
+    assert.equal(r.body.items.length, 6);
+    assert.equal(r.body.items[0].no, 2, "기존 번호 다음부터");
+    assert.deepEqual(r.body.items.map((x) => x.status), ["ready", "live", "done", "ready", "live", "done"]);
+    assert.equal((await admin("POST", "/samples", { count: 2, status: "done" })).body.items.length, 2, "여러 번 넣을 수 있음");
+    await d.alarm();
+    const ov = (await admin("GET", "/overview")).body;
+    assert.equal(ov.items.filter((i) => i.status === "sold").length, 4, "완료 4개는 낙찰");
+    assert.equal(ov.items.filter((i) => i.sample && i.status === "live" && i.bidCount === 0).length, 2, "준비중은 입찰 없음");
+    assert.ok(ov.sms.length === 4 && ov.sms.every((x) => x.status === "preview" && x.mode === "sample"));
+    assert.equal(fetched, 0, "솔라피 호출 없음");
+    const sold = ov.items.find((i) => i.status === "sold");
+    const pv = (await admin("POST", "/sms-preview", { template: "{물품명}/{사번}", itemId: sold.id })).body;
+    assert.equal(pv.text, sold.name + "/" + sold.winner.emp);
+    assert.equal(pv.to.state, "sold");
+    const roster = (await admin("GET", "/roster")).body.rows;
+    assert.ok(roster.some((x) => x.state === "won") && roster.some((x) => x.state === "leading"));
+    assert.match((await admin("GET", "/export.csv?type=roster")).body, /"낙찰완료"/);
+    assert.equal((await admin("DELETE", "/samples")).body.deleted, 8);
+    assert.deepEqual((await call("GET", "/api/state")).body.items.map((i) => i.name), ["진짜 물품"]);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test("희망가: 시작 전에만, 1인 1개 수정/취소, 금액 비공개, 관리자 통계", async () => {
+  const { admin, login, call } = setup();
+  const id = (await admin("POST", "/items", { no: 1, name: "A", start: 0, step: 1000, endAt: Date.now() + 86400000 })).body.id;
+  const a = await login("700001"), b = await login("700002"), c = await login("700003");
+  assert.equal((await a("POST", "/api/wish", { itemId: id, amount: 30000 })).body.code, "wish_closed", "시작 시각 없으면 접수 안 함");
+  await admin("PUT", "/schedule", { startAt: Date.now() + 3600000 });
+  assert.equal((await a("POST", "/api/wish", { itemId: id, amount: 30000 })).status, 200);
+  assert.equal((await a("POST", "/api/wish", { itemId: id, amount: 41000 })).status, 429, "1초 안에 연속 불가");
+  await sleep(1001);
+  assert.equal((await a("POST", "/api/wish", { itemId: id, amount: 40000 })).status, 200, "수정");
+  await b("POST", "/api/wish", { itemId: id, amount: 20000 });
+  await c("POST", "/api/wish", { itemId: id, amount: 9000000 });
+  const pub = (await call("GET", "/api/state")).body;
+  assert.equal(pub.items[0].wishCount, 3);
+  assert.ok(!JSON.stringify(pub).includes("40000") && !JSON.stringify(pub).includes("9000000"), "금액은 공개 안 됨");
+  assert.equal(pub.schedule.wishOpen, true); assert.equal(pub.schedule.started, false);
+  assert.deepEqual((await a("GET", "/api/my")).body.wishes, { [id]: 40000 });
+  const w = (await admin("GET", "/overview")).body.items[0].wish;
+  assert.deepEqual(w, { count: 3, avg: 3020000, median: 40000, min: 20000, max: 9000000 });
+  await sleep(1001);
+  await c("POST", "/api/wish", { itemId: id, amount: null });
+  assert.equal((await admin("GET", "/overview")).body.items[0].wish.count, 2, "취소");
+  assert.equal((await a("POST", "/api/bid", { itemId: id, amount: 50000 })).body.code, "not_started", "시작 전 입찰 불가");
+  assert.match((await admin("GET", "/export.csv?type=wishes")).body, /"700001","40000"/);
+  await admin("PUT", "/schedule", { startAt: Date.now() + 3600000, wishEndAt: Date.now() - 1 });
+  assert.equal((await b("POST", "/api/wish", { itemId: id, amount: 1 })).body.code, "wish_closed", "희망가 마감 후");
+  await admin("PUT", "/schedule", { startAt: Date.now() - 1 });
+  assert.equal((await call("GET", "/api/state")).body.schedule.started, true);
+  const r = await a("POST", "/api/bid", { itemId: id, amount: 500 });
+  assert.equal(r.body.minNext, 1000, "시작가 0이면 입찰 단위부터");
+  assert.equal((await a("POST", "/api/bid", { itemId: id, amount: 1000 })).status, 200);
+});
+
+test("30초 리셋: 기본값 30, 무제한 연장, 관리자 설정으로 변경", async () => {
+  const { admin, login, call } = setup({ ...env, ANTI_SNIPE_SECONDS: undefined });
+  const end = Date.now() + 20000; // 20초 남음
+  const id = (await admin("POST", "/items", { no: 1, name: "A", start: 1000, step: 100, endAt: end })).body.id;
+  const a = await login("800001"), b = await login("800002");
+  assert.equal((await call("GET", "/api/state")).body.schedule.extendSeconds, 30);
+  await a("POST", "/api/bid", { itemId: id, amount: 1000 });
+  let it = (await call("GET", "/api/state")).body.items[0];
+  assert.ok(it.endAt > end + 9000 && it.endAt <= Date.now() + 30000, "남은 시간이 30초로 리셋");
+  assert.equal(it.extended, true); assert.equal(it.baseEndAt, end);
+  const e1 = it.endAt;
+  await sleep(300);
+  await b("POST", "/api/bid", { itemId: id, amount: 1100 });
+  it = (await call("GET", "/api/state")).body.items[0];
+  assert.ok(it.endAt > e1, "또 연장 (제한 없음)");
+  // 30초 넘게 남은 입찰은 연장 안 함
+  const id2 = (await admin("POST", "/items", { no: 2, name: "B", start: 1000, step: 100, endAt: Date.now() + 60000 })).body.id;
+  await sleep(1001);
+  await a("POST", "/api/bid", { itemId: id2, amount: 1000 });
+  assert.equal((await call("GET", "/api/state")).body.items[1].extended, false);
+  await admin("PUT", "/schedule", { extendSeconds: 0 });
+  assert.equal((await call("GET", "/api/state")).body.schedule.extendSeconds, 0);
+});
+
+test("물품별 입찰 버튼 금액 4개", async () => {
+  const { admin, login, call } = setup();
+  const id = (await admin("POST", "/items", { no: 1, name: "A", start: 50000, raises: [50000, 5000, 30000, 10000], endAt: Date.now() + 60000 })).body.id;
+  const it = (await call("GET", "/api/state")).body.items[0];
+  assert.deepEqual(it.raises, [5000, 10000, 30000, 50000], "작은 순으로 정렬");
+  assert.equal((await admin("POST", "/items", { no: 2, name: "B", start: 0, raises: [1000, 0, 2, 3], endAt: Date.now() + 1 })).status, 400);
+  const dflt = (await admin("POST", "/items", { no: 3, name: "C", start: 0, endAt: Date.now() + 60000 })).body.id;
+  assert.deepEqual((await call("GET", "/api/items/" + dflt)).body.item.raises, [1000, 3000, 5000, 10000], "기본값");
+  const a = await login("900101");
+  await a("POST", "/api/bid", { itemId: id, amount: 50000 });
+  assert.equal((await call("GET", "/api/items/" + id)).body.item.minNext, 55000, "다음 최소 = 가장 작은 버튼");
+  await admin("PUT", "/items/" + id, { raises: [10000, 20000, 30000, 40000] });
+  assert.equal((await call("GET", "/api/items/" + id)).body.item.minNext, 60000);
+});
+
+
+test("보안: 관리자 PIN, 잠금, PIN 변경 시 권한 해제, 기기 5개 제한, 공개 응답에 개인정보 없음", async () => {
+  const { call, d } = setup({ ...env, ADMIN_PIN: "482913" });
+  const L = (b) => call("POST", "/api/login", { agree: true, ...b });
+  // 일반 로그인으로는 관리자가 안 됨
+  const plain = (await L({ emp: "170962", phone: "01046233945" })).body;
+  assert.equal(plain.isAdmin, false);
+  assert.equal((await call("GET", "/api/admin/overview", null, { authorization: "Bearer " + plain.token })).status, 403);
+  // 틀린 PIN 5번 → 잠금
+  for (let i = 0; i < 5; i++) assert.equal((await L({ emp: "170962", phone: "01046233945", admin: true, pin: "000000" })).status, 403);
+  const locked = await L({ emp: "170962", phone: "01046233945", admin: true, pin: "482913" });
+  assert.equal(locked.status, 429, "맞는 PIN이어도 잠금 중엔 불가");
+  d.run(`DELETE FROM admin_fail`);
+  const ok = (await L({ emp: "170962", phone: "01046233945", admin: true, pin: "482913" })).body;
+  assert.equal(ok.isAdmin, true);
+  assert.equal((await call("GET", "/api/admin/overview", null, { authorization: "Bearer " + ok.token })).status, 200);
+  // PIN을 바꾸면 기존 관리자 로그인 무효
+  d.env = { ...d.env, ADMIN_PIN: "111111" };
+  assert.equal((await call("GET", "/api/admin/overview", null, { authorization: "Bearer " + ok.token })).status, 403);
+  // 같은 사번 기기 5개까지만
+  const toks = [];
+  for (let i = 0; i < 7; i++) { toks.push((await L({ emp: "555555", phone: "01055555555" })).body.token); await sleep(2); }
+  const alive = [];
+  for (const t of toks) alive.push((await call("GET", "/api/me", null, { authorization: "Bearer " + t })).status);
+  assert.deepEqual(alive, [401, 401, 200, 200, 200, 200, 200]);
+  // 공개 응답엔 전화번호 없음
+  const st = JSON.stringify((await call("GET", "/api/state")).body);
+  assert.ok(!/010\d{8}|010-\d{4}/.test(st));
+  // 이상한 토큰 / SQL 같은 입력
+  assert.equal((await call("GET", "/api/me", null, { authorization: "Bearer ' OR 1=1 --" })).status, 401);
+  assert.equal((await call("GET", "/api/items/x'%20OR%201=1")).status, 404);
+});
+
+test("같은 금액 동시 입찰 안내, 공지, 관리자 작업 기록", async () => {
+  const { admin, login, call } = setup();
+  const id = (await admin("POST", "/items", { no: 1, name: "머플러", start: 30000, raises: [1000, 3000, 5000, 10000], endAt: Date.now() + 60000 })).body.id;
+  const a = await login("910001"), b = await login("910002");
+  assert.equal((await a("POST", "/api/bid", { itemId: id, amount: 31000 })).status, 200);
+  const r = await b("POST", "/api/bid", { itemId: id, amount: 31000 });
+  assert.equal(r.body.code, "same_amount");
+  assert.match(r.body.error, /같은 금액\(31,000원\)이 .* 먼저 들어왔어요/);
+  // 공지: 기본 안내가 상태에 실려 감, 관리자가 바꾸면 바뀜, 비우면 숨김
+  assert.match((await call("GET", "/api/state")).body.notice, /바로 입찰/);
+  await admin("PUT", "/schedule", { notice: "담당자: 총무팀 (내선 1234)" });
+  assert.equal((await call("GET", "/api/state")).body.notice, "담당자: 총무팀 (내선 1234)");
+  await admin("PUT", "/schedule", { notice: "" });
+  assert.equal((await call("GET", "/api/state")).body.notice, "");
+  // 입찰 취소 → 기록에 누가, 어떤 입찰을
+  const bid = (await admin("GET", `/items/${id}/bids`)).body.bids[0];
+  await admin("DELETE", "/bids/" + bid.id);
+  const log = (await admin("GET", "/log")).body.log;
+  const cancel = log.find((x) => x.action === "입찰 취소");
+  assert.equal(cancel.emp, "170962");
+  assert.equal(cancel.item_name, "머플러");
+  assert.match(cancel.detail, /사번 910001 · 31,000원/);
+  assert.ok(log.some((x) => x.action === "물품 등록"));
+  assert.ok(log.some((x) => x.action === "설정 변경" && /공지/.test(x.detail)));
+  assert.equal((await a("GET", "/api/admin/log")).status, 403, "일반 참여자는 기록 못 봄");
 });

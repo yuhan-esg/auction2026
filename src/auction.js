@@ -474,7 +474,7 @@ export class Auction extends DurableObject {
 
       if (p === "/items" && m === "POST") {
         const d = this.readItemBody(await body());
-        if (this.first(`SELECT 1 AS x FROM items WHERE no=?`, d.no)) return err(409, `No.${d.no} 은(는) 이미 있습니다.`);
+        if (this.first(`SELECT 1 AS x FROM items WHERE no=?`, d.no)) return err(409, "다른 관리자가 방금 물품을 등록했어요.\n다시 저장해 주세요.");
         const id = "i" + Date.now().toString(36) + randHex(2);
         this.run(`INSERT INTO items(id,no,name,description,donor,start_price,step,raises,end_at,base_end_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
           id, d.no, d.name, d.description, d.donor, d.start_price, d.step, d.raises, d.end_at, d.end_at, Date.now());
@@ -488,7 +488,7 @@ export class Auction extends DurableObject {
         if (!it) return err(404, "물품을 찾을 수 없습니다.");
         if (m === "PUT") {
           const d = this.readItemBody(await body(), true);
-          if (d.no && this.first(`SELECT 1 AS x FROM items WHERE no=? AND id<>?`, d.no, id)) return err(409, `No.${d.no} 은(는) 이미 있습니다.`);
+          if (d.no && this.first(`SELECT 1 AS x FROM items WHERE no=? AND id<>?`, d.no, id)) return err(409, "다른 관리자가 방금 물품을 등록했어요.\n다시 저장해 주세요.");
           const merged = { ...it, ...d };
           // 종료 시각을 미래로 바꾸면 다시 진행중으로 되돌림
           const reopen = it.settled_at && merged.end_at > Date.now();
